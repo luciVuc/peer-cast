@@ -2,8 +2,17 @@ import { config as loadEnv } from "dotenv";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-loadEnv();
+// npm workspace scripts run with cwd = packages/server, so a repo-root .env
+// (the documented dev convention) would otherwise be ignored. Load the root
+// first, then fall back to the current-working-directory .env.
+loadEnv({
+  path: [
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+    ".env",
+  ],
+});
 
 function int(name: string, fallback: number): number {
   const v = process.env[name];
