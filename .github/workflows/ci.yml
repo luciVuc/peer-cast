@@ -1,0 +1,35 @@
+name: CI
+
+# Replaces the old "Deploy viewer to GitHub Pages" workflow: the standalone
+# `packages/viewer/` directory no longer exists in the Node.js monorepo, and
+# publishing the built extension/web to Pages is out of scope. This workflow
+# gates every push/PR on the full verification matrix instead.
+
+on:
+  push:
+    branches: [main, webapp-nodejs]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # shared → web → server
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm -w @peer-cast/extension run check
+      - run: npx prettier --check .

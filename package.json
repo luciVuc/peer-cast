@@ -1,0 +1,35 @@
+{
+  "name": "peer-cast",
+  "version": "2.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Broadcast a browser tab or screen to anyone over direct peer-to-peer WebRTC. Self-hostable Node.js backend + React PWA + optional Chrome extension.",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web",
+    "packages/extension",
+    "tests/e2e"
+  ],
+  "scripts": {
+    "build": "npm run build -w @peer-cast/shared && npm run build -w @peer-cast/web && npm run build -w @peer-cast/server",
+    "build:shared": "npm run build -w @peer-cast/shared",
+    "build:server": "npm run build -w @peer-cast/server",
+    "build:web": "npm run build -w @peer-cast/web",
+    "dev": "npm run dev -w @peer-cast/server & npm run dev -w @peer-cast/web",
+    "dev:server": "npm run dev -w @peer-cast/server",
+    "dev:web": "npm run dev -w @peer-cast/web",
+    "start": "npm run start -w @peer-cast/server",
+    "typecheck": "npm run typecheck -w @peer-cast/shared && npm run typecheck -w @peer-cast/server && npm run typecheck -w @peer-cast/web",
+    "test": "npm run test -w @peer-cast/server && npm run test -w @peer-cast/web",
+    "test:e2e": "npm run build && npm run test -w @peer-cast/e2e",
+    "format": "npx -y prettier --write .",
+    "format:check": "npx -y prettier --check ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}

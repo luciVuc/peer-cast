@@ -1,0 +1,16 @@
+{
+  "name": "@peer-cast/e2e",
+  "version": "2.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "PeerCast end-to-end tests (Playwright): UI flows + real WebRTC over self-hosted signaling.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

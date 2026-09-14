@@ -1,0 +1,25 @@
+/**/node_modules
+.playwright-mcp
+
+# Build output
+/**/dist
+*.tsbuildinfo
+
+# Runtime data + secrets
+/data
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.log
+
+# Test artifacts
+**/test-results/
+**/playwright-report/
+**/.last-run.json
+tests/e2e/.tmp/
+_git

@@ -1,0 +1,57 @@
+services:
+  peercast:
+    build: .
+    image: peercast:2.0.0
+    container_name: peercast
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # REQUIRED — generate with: openssl rand -hex 32
+      # The container will refuse to start without a strong secret.
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env first. Generate: openssl rand -hex 32}"
+      NODE_ENV: production
+      PORT: "8787"
+      # Public hostname advertised to clients for PeerJS signaling.
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      PUBLIC_SECURE: ${PUBLIC_SECURE:-false}
+      DATABASE_FILE: /data/peercast.db
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # ICE servers advertised to every client (viewer + broadcaster) via
+      # GET /api/config. Default is Google STUN only. To use the bundled TURN
+      # relay below, set ICE_SERVERS and TURN_SHARED_SECRET in your .env (see
+      # .env.example), e.g.:
+      #   ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},
+      #     {"urls":"turn:YOUR_HOST:3478"}]
+      #   TURN_SHARED_SECRET=<must match static-auth-secret in turn/turnserver.conf>
+      # Time-limited TURN credentials are generated per client from the shared
+      # secret (no static username/credential needed or sent).
+      ICE_SERVERS: ${ICE_SERVERS:-}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
+    volumes:
+      - peercast-data:/data
+
+  # Optional TURN relay for symmetric-NAT viewers.
+  # Enable with:  docker compose --profile turn up -d
+  #
+  # On Linux, host networking is strongly recommended so relays work without
+  # mapping the whole port range. On Docker Desktop (mac/Windows) host mode is
+  # limited — use the explicit port mapping variant below and set external-ip.
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: peercast-turn
+    profiles: ["turn"]
+    restart: unless-stopped
+    # --- Linux (recommended) ---
+    network_mode: host
+    # --- Docker Desktop alternative: comment out network_mode above and use ---
+    # ports:
+    #   - "3478:3478/udp"
+    #   - "3478:3478/tcp"
+    #   - "49160-49200:49160-49200/udp"
+    volumes:
+      - ./turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+
+volumes:
+  peercast-data:

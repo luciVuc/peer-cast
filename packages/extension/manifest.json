@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "PeerCast",
+  "version": "2.0.0",
+  "description": "Broadcast this tab (or your whole screen) to viewers anywhere over direct peer-to-peer WebRTC. Connects to your self-hosted PeerCast server.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "PeerCast",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Open PeerCast"
+    },
+    "start-cast": {
+      "suggested_key": { "default": "Ctrl+Shift+Y" },
+      "description": "Start broadcasting the current tab"
+    },
+    "toggle-cast": {
+      "suggested_key": { "default": "Ctrl+Shift+K" },
+      "description": "Toggle broadcasting the current tab"
+    }
+  },
+  "permissions": [
+    "tabCapture",
+    "tabs",
+    "storage",
+    "offscreen",
+    "desktopCapture"
+  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"]
+}

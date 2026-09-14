@@ -1,0 +1,10 @@
+{
+  "name": "@peer-cast/extension",
+  "version": "2.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "PeerCast Chrome MV3 extension — optional broadcaster that captures a tab or screen and hosts the P2P broadcast. Connects to a self-hosted PeerCast backend.",
+  "scripts": {
+    "check": "node --check background.js && node --check offscreen.js && node --check popup.js && node --check lib/api-client.js"
+  }
+}

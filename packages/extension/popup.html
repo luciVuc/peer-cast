@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="hdr">
+      <div class="brand"><span class="logo">📡</span> PeerCast</div>
+      <span id="version" class="version">v2.0.0</span>
+    </header>
+
+    <!-- Sign in -->
+    <section id="viewSignIn" class="view">
+      <p class="lead">Sign in to your PeerCast server to broadcast.</p>
+      <label class="label" for="serverInput">Server URL</label>
+      <input
+        id="serverInput"
+        class="input"
+        placeholder="https://peercast.example.com"
+        autocomplete="url"
+      />
+      <label class="label" for="usernameInput">Username</label>
+      <input id="usernameInput" class="input" autocomplete="username" />
+      <label class="label" for="passwordInput">Password</label>
+      <input
+        id="passwordInput"
+        class="input"
+        type="password"
+        autocomplete="current-password"
+      />
+      <p id="signInError" class="error" hidden></p>
+      <button id="signInBtn" class="btn btn-primary">Sign in</button>
+      <p class="hint">
+        No account? Open your server in a browser and register there.
+      </p>
+    </section>
+
+    <!-- Broadcast controls -->
+    <section id="viewControls" class="view" hidden>
+      <div class="profilebar">
+        <div>
+          <div class="pname" id="hdrHandle">@user</div>
+          <div class="pserver" id="hdrServer"></div>
+        </div>
+        <button id="signOutBtn" class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+
+      <label class="label" for="titleInput">Broadcast title</label>
+      <input id="titleInput" class="input" value="Live broadcast" />
+
+      <label class="label" for="accessSelect">Who can watch</label>
+      <select id="accessSelect" class="input">
+        <option value="public">Public — anyone</option>
+        <option value="authenticated">Members — signed-in only</option>
+        <option value="code">Code — anyone with the code</option>
+      </select>
+
+      <div id="codeRow" hidden>
+        <label class="label" for="codeInput">Access code</label>
+        <input id="codeInput" class="input" placeholder="e.g. spring-demo" />
+      </div>
+
+      <button id="startTabBtn" class="btn btn-primary">
+        Broadcast this tab
+      </button>
+      <button id="shareScreenBtn" class="btn btn-ghost">
+        Broadcast screen…
+      </button>
+      <p id="controlsError" class="error" hidden></p>
+    </section>
+
+    <!-- Live -->
+    <section id="viewLive" class="view" hidden>
+      <div class="livebadge"><span class="dot"></span> LIVE</div>
+      <div id="sourceLabel" class="source"></div>
+      <div class="stats">
+        <div><span id="statViewers">0</span><small>viewers</small></div>
+        <div><span id="statBitrate">—</span><small>kbps</small></div>
+      </div>
+      <label class="label">Viewer link</label>
+      <div class="row">
+        <input id="viewerLink" class="input" readonly />
+        <button id="copyLinkBtn" class="btn btn-ghost btn-sm">Copy</button>
+      </div>
+      <p id="liveWarning" class="warn" hidden></p>
+      <button id="stopBtn" class="btn btn-danger">Stop broadcast</button>
+    </section>
+
+    <div id="starting" class="view" hidden>
+      <p class="lead">Starting broadcast…</p>
+    </div>
+
+    <script src="lib/api-client.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

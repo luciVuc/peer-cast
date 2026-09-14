@@ -1,0 +1,7 @@
+# Normalize all text to LF so cross-copy sync checks (AGENTS.md verification)
+# produce clean diff output on every platform, including Windows.
+* text=auto eol=lf
+
+# Vendored minified payloads and binary assets — never line-normalize or diff.
+*.min.js binary
+*.png binary

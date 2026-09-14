@@ -1,0 +1,18 @@
+# Dependencies & build output
+**/node_modules
+**/dist
+*.tsbuildinfo
+
+# Vendored / generated
+packages/extension/lib/peerjs.min.js
+packages/web/public/icons
+
+# Playwright artifacts
+tests/e2e/test-results
+tests/e2e/playwright-report
+tests/e2e/.tmp
+
+# Runtime
+/data
+*.db
+docker-compose.yml
