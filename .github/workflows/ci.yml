@@ -27,6 +27,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Restore Rollup native binding
+        run: |
+          ROLLUP_VER=$(node -p "require('./node_modules/rollup/package.json').version")
+          TGZ=$(npm pack --silent "@rollup/rollup-linux-x64-gnu@${ROLLUP_VER}")
+          tar -xzf "$TGZ"
+          mkdir -p node_modules/@rollup
+          rm -rf node_modules/@rollup/rollup-linux-x64-gnu
+          mv package node_modules/@rollup/rollup-linux-x64-gnu
+          rm -f "$TGZ"
       # shared → web → server
       - run: npm run build
       - run: npm run typecheck
@@ -50,6 +59,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Restore Rollup native binding
+        run: |
+          ROLLUP_VER=$(node -p "require('./node_modules/rollup/package.json').version")
+          TGZ=$(npm pack --silent "@rollup/rollup-linux-x64-gnu@${ROLLUP_VER}")
+          tar -xzf "$TGZ"
+          mkdir -p node_modules/@rollup
+          rm -rf node_modules/@rollup/rollup-linux-x64-gnu
+          mv package node_modules/@rollup/rollup-linux-x64-gnu
+          rm -f "$TGZ"
       - run: npm run build
 
       - name: Package production release
