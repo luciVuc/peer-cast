@@ -119,7 +119,8 @@ jobs:
           ssh -i ~/.ssh/oci_deploy_key "$OCI_USER@$OCI_HOST" \
             "RELEASE_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          release="/opt/peercast-releases/$RELEASE_SHA"
+            export PATH="/opt/peercast-node/bin:$PATH"
+            release="/opt/peercast-releases/$RELEASE_SHA"
           archive="/tmp/peercast-release-$RELEASE_SHA.tgz"
 
           sudo mkdir -p /opt/peercast-releases
