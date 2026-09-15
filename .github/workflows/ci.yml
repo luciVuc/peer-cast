@@ -143,7 +143,7 @@ jobs:
           sudo restorecon -RF /opt/peercast-app
           if sudo systemctl start peercast \
             && sudo systemctl is-active --quiet peercast \
-            && curl --fail --retry 10 --retry-delay 2 http://127.0.0.1:8787/api/health; then
+            && curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8787/api/health; then
             exit 0
           fi
 
