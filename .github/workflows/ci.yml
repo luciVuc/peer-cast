@@ -95,9 +95,21 @@ jobs:
           OCI_HOST: ${{ secrets.OCI_HOST }}
           OCI_USER: ${{ secrets.OCI_USER }}
         run: |
-          scp -i ~/.ssh/oci_deploy_key \
-            peercast-release.tgz \
-            "$OCI_USER@$OCI_HOST:/tmp/peercast-release-${GITHUB_SHA}.tgz"
+          for attempt in 1 2 3 4 5; do
+            if scp \
+              -i ~/.ssh/oci_deploy_key \
+              -o ConnectTimeout=30 \
+              -o ConnectionAttempts=1 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=4 \
+              peercast-release.tgz \
+              "$OCI_USER@$OCI_HOST:/tmp/peercast-release-${GITHUB_SHA}.tgz"; then
+              exit 0
+            fi
+            echo "Upload attempt $attempt failed; retrying in 15 seconds..."
+            sleep 15
+          done
+          exit 1
 
       - name: Install and activate release
         env:
