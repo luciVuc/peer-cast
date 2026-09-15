@@ -91,8 +91,10 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
           formAction: ["'self'"],
           baseUri: ["'self'"],
           objectSrc: ["'none'"],
+          upgradeInsecureRequests: config.signal.secure ? [] : null,
         },
       },
+      hsts: config.signal.secure ? undefined : false,
       crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
