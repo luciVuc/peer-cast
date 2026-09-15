@@ -79,6 +79,25 @@ to the server terminal** — copy the link from there to verify your address.
 
 ## Quick start — production
 
+### Automatic OCI deployment
+
+Pushes to `master` are tested and then deployed automatically to the configured
+Oracle Cloud VM by GitHub Actions. The deployment uses the existing
+`peercast` systemd service and keeps SQLite data in `/opt/peercast-data`.
+
+Configure these repository secrets before enabling the workflow:
+
+| Secret | Value |
+| --- | --- |
+| `OCI_HOST` | The VM public IP or DNS name |
+| `OCI_USER` | `opc` |
+| `OCI_SSH_PRIVATE_KEY` | The private key used to SSH to the VM |
+| `OCI_KNOWN_HOSTS` | Output of `ssh-keyscan -H <OCI_HOST>` |
+
+The `production` environment can optionally require an approval before a
+deployment. Pull requests run CI only; only successful pushes to `master`
+deploy.
+
 ### Option A — Docker (recommended)
 
 ```bash
