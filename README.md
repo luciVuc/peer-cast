@@ -87,12 +87,12 @@ Oracle Cloud VM by GitHub Actions. The deployment uses the existing
 
 Configure these repository secrets before enabling the workflow:
 
-| Secret | Value |
-| --- | --- |
-| `OCI_HOST` | The VM public IP or DNS name |
-| `OCI_USER` | `opc` |
+| Secret                | Value                                 |
+| --------------------- | ------------------------------------- |
+| `OCI_HOST`            | The VM public IP or DNS name          |
+| `OCI_USER`            | `opc`                                 |
 | `OCI_SSH_PRIVATE_KEY` | The private key used to SSH to the VM |
-| `OCI_KNOWN_HOSTS` | Output of `ssh-keyscan -H <OCI_HOST>` |
+| `OCI_KNOWN_HOSTS`     | Output of `ssh-keyscan -H <OCI_HOST>` |
 
 The `production` environment can optionally require an approval before a
 deployment. Pull requests run CI only; only successful pushes to `master`
