@@ -22,17 +22,17 @@ function Hero() {
             Media never touches a server — only a tiny signaling handshake does.
             Find a creator by @username and watch instantly.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             {user ? (
-              <Link to="/broadcast" className="btn-primary">
+              <Link to="/broadcast" className="btn-primary w-full sm:w-auto">
                 Start broadcasting
               </Link>
             ) : (
-              <Link to="/register" className="btn-primary">
+              <Link to="/register" className="btn-primary w-full sm:w-auto">
                 Create free account
               </Link>
             )}
-            <a href="#live" className="btn-ghost">
+            <a href="#live" className="btn-ghost w-full sm:w-auto">
               Browse live
             </a>
           </div>

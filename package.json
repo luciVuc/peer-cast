@@ -31,5 +31,8 @@
   },
   "overrides": {
     "qs": "^6.16.0"
+  },
+  "devDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.63.1"
   }
 }
