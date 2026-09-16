@@ -155,7 +155,9 @@ export function BroadcastPage() {
         stream,
         token: sigToken,
         verify: async (ticket) => {
-          if (access === "public") return null;
+          // Public broadcasts do not need a ticket, but the host still needs
+          // a non-null identity to accept the media/data connection.
+          if (access === "public") return "Viewer";
           if (!ticket) return null;
           try {
             const res = await verifyTicket({ ticket, peerId }).unwrap();
