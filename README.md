@@ -19,20 +19,21 @@ laptop, or a Raspberry Pi. No Cloudflare, no third-party services required.
 1. [What's in the box](#whats-in-the-box)
 2. [Quick start — development](#quick-start--development)
 3. [Quick start — production](#quick-start--production)
-4. [First-run checklist](#first-run-checklist)
-5. [Features at a glance](#features-at-a-glance)
-6. [Pages](#pages)
-7. [How it works](#how-it-works)
-8. [Security & identity model](#security--identity-model)
-9. [Email — verification & password reset](#email--verification--password-reset)
-10. [Moderation](#moderation-in-a-peer-to-peer-system)
-11. [API surface](#api-surface-api)
-12. [Configuration reference](#configuration-reference)
-13. [TURN relay (symmetric-NAT viewers)](#turn-relay-symmetric-nat-viewers)
-14. [The Chrome extension (optional)](#the-chrome-extension-optional)
-15. [Testing](#testing)
-16. [Development commands](#development-commands)
-17. [Limitations](#limitations)
+4. [Updating the OCI production deployment](#updating-the-oci-production-deployment)
+5. [First-run checklist](#first-run-checklist)
+6. [Features at a glance](#features-at-a-glance)
+7. [Pages](#pages)
+8. [How it works](#how-it-works)
+9. [Security & identity model](#security--identity-model)
+10. [Email — verification & password reset](#email--verification--password-reset)
+11. [Moderation](#moderation-in-a-peer-to-peer-system)
+12. [API surface](#api-surface-api)
+13. [Configuration reference](#configuration-reference)
+14. [TURN relay (symmetric-NAT viewers)](#turn-relay-symmetric-nat-viewers)
+15. [The Chrome extension (optional)](#the-chrome-extension-optional)
+16. [Testing](#testing)
+17. [Development commands](#development-commands)
+18. [Limitations](#limitations)
 
 ---
 
@@ -97,6 +98,65 @@ Configure these repository secrets before enabling the workflow:
 The `production` environment can optionally require an approval before a
 deployment. Pull requests run CI only; only successful pushes to `master`
 deploy.
+
+### Deploying a code change
+
+The OCI workflow deploys the commit that lands on `master`; it does not deploy
+every branch or pull request. A normal update is:
+
+```bash
+# Work on a feature branch
+git switch -c fix/short-description
+
+# Make changes, then run the relevant checks
+npm run build
+npm run typecheck
+npm test
+
+# Commit and publish the branch
+git add <changed-files>
+git commit -m "fix: describe the change"
+git push -u origin fix/short-description
+```
+
+Open a pull request into `master`. After it is reviewed and merged, the merge
+commit triggers the `CI` workflow. The `build-test` job must pass before
+`Deploy to OCI` runs. A direct push to `master` also triggers deployment, but
+pull-request runs by themselves never change production.
+
+To monitor or troubleshoot a deployment:
+
+1. Open the repository's **Actions** tab and select the `CI` workflow.
+2. Open the run for the merge commit and confirm `build-test` succeeded.
+3. Confirm `Deploy to OCI` succeeded. If the `production` environment requires
+   approval, approve the waiting job before it can upload the release.
+4. Verify the public endpoints after deployment:
+
+   ```bash
+   curl -fsS https://your-domain.example/api/health
+   curl -fsS https://your-domain.example/api/config
+   ```
+
+The workflow packages the built shared, web, and server artifacts, uploads a
+versioned release over SSH, restarts the `peercast` systemd service, and checks
+`/api/health`. If activation or the health check fails, it restores the
+previous release and fails the workflow. It does not replace the persistent
+SQLite data directory.
+
+### PWA and live-broadcast updates
+
+The PWA downloads the new service worker and hashed assets automatically, but a
+page that is already open continues running its previous JavaScript bundle.
+After a deployment, viewers should refresh or reopen the page before testing
+the change. A broadcaster must stop the current broadcast, close or fully
+reload the PWA, and start a new broadcast so the host uses the new bundle.
+Do not reload a broadcaster during an active broadcast unless ending that
+broadcast is intentional.
+
+If a deployment is healthy but an old page still behaves as before, close all
+PeerCast tabs/windows and open the site again. Check the browser's network
+requests for a newly hashed `assets/index-*.js` file before reproducing the
+issue.
 
 ### Option A — Docker (recommended)
 
