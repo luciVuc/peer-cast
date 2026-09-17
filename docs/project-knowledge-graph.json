@@ -1,0 +1,327 @@
+{
+  "schema": "peer-cast.project-knowledge-graph.v1",
+  "generatedAt": "2026-09-17",
+  "sourceCommit": "380ecc8",
+  "description": "Current-state architecture and dependency graph for PeerCast.",
+  "nodes": [
+    {
+      "id": "repo",
+      "kind": "repository",
+      "path": ".",
+      "label": "PeerCast monorepo"
+    },
+    {
+      "id": "shared",
+      "kind": "package",
+      "path": "packages/shared",
+      "label": "@peer-cast/shared"
+    },
+    {
+      "id": "server",
+      "kind": "package",
+      "path": "packages/server",
+      "label": "@peer-cast/server"
+    },
+    {
+      "id": "web",
+      "kind": "package",
+      "path": "packages/web",
+      "label": "@peer-cast/web"
+    },
+    {
+      "id": "extension",
+      "kind": "package",
+      "path": "packages/extension",
+      "label": "@peer-cast/extension"
+    },
+    {
+      "id": "e2e",
+      "kind": "package",
+      "path": "tests/e2e",
+      "label": "@peer-cast/e2e"
+    },
+    {
+      "id": "shared-models",
+      "kind": "module",
+      "path": "packages/shared/src/models.ts",
+      "label": "Domain models"
+    },
+    {
+      "id": "shared-api",
+      "kind": "module",
+      "path": "packages/shared/src/api.ts",
+      "label": "REST contracts"
+    },
+    {
+      "id": "shared-validation",
+      "kind": "module",
+      "path": "packages/shared/src/validation.ts",
+      "label": "Validation constants"
+    },
+    {
+      "id": "server-index",
+      "kind": "entrypoint",
+      "path": "packages/server/src/index.ts",
+      "label": "Server bootstrap"
+    },
+    {
+      "id": "server-app",
+      "kind": "module",
+      "path": "packages/server/src/app.ts",
+      "label": "Express composition"
+    },
+    {
+      "id": "server-config",
+      "kind": "module",
+      "path": "packages/server/src/config.ts",
+      "label": "Environment config"
+    },
+    {
+      "id": "server-db",
+      "kind": "module",
+      "path": "packages/server/src/db/index.ts",
+      "label": "SQLite schema and migrations"
+    },
+    {
+      "id": "server-auth",
+      "kind": "module",
+      "path": "packages/server/src/lib/auth.ts",
+      "label": "JWT, refresh, access and signaling tickets"
+    },
+    {
+      "id": "server-peer",
+      "kind": "module",
+      "path": "packages/server/src/signaling/peerServer.ts",
+      "label": "PeerJS signaling and WS auth"
+    },
+    {
+      "id": "server-repos",
+      "kind": "directory",
+      "path": "packages/server/src/repos",
+      "label": "Prepared SQL repositories"
+    },
+    {
+      "id": "server-routes",
+      "kind": "directory",
+      "path": "packages/server/src/routes",
+      "label": "REST routers"
+    },
+    {
+      "id": "web-app",
+      "kind": "module",
+      "path": "packages/web/src/App.tsx",
+      "label": "React route tree"
+    },
+    {
+      "id": "web-api",
+      "kind": "module",
+      "path": "packages/web/src/store/api.ts",
+      "label": "RTK Query API client"
+    },
+    {
+      "id": "web-peer",
+      "kind": "module",
+      "path": "packages/web/src/lib/peer.ts",
+      "label": "PeerJS/WebRTC wrapper"
+    },
+    {
+      "id": "web-broadcast",
+      "kind": "page",
+      "path": "packages/web/src/pages/BroadcastPage.tsx",
+      "label": "Web broadcaster"
+    },
+    {
+      "id": "web-viewer",
+      "kind": "page",
+      "path": "packages/web/src/pages/ViewerPage.tsx",
+      "label": "Web viewer"
+    },
+    {
+      "id": "web-sw",
+      "kind": "service-worker",
+      "path": "packages/web/src/sw.ts",
+      "label": "Workbox PWA service worker"
+    },
+    {
+      "id": "ext-background",
+      "kind": "module",
+      "path": "packages/extension/background.js",
+      "label": "Extension service worker"
+    },
+    {
+      "id": "ext-offscreen",
+      "kind": "module",
+      "path": "packages/extension/offscreen.js",
+      "label": "Extension capture and host"
+    },
+    {
+      "id": "ext-popup",
+      "kind": "module",
+      "path": "packages/extension/popup.js",
+      "label": "Extension UI"
+    },
+    {
+      "id": "ci",
+      "kind": "workflow",
+      "path": ".github/workflows/ci.yml",
+      "label": "CI and OCI deployment"
+    },
+    {
+      "id": "docker",
+      "kind": "deployment",
+      "path": "Dockerfile",
+      "label": "Container build"
+    },
+    {
+      "id": "compose",
+      "kind": "deployment",
+      "path": "docker-compose.yml",
+      "label": "Container and optional TURN"
+    },
+    {
+      "id": "sqlite",
+      "kind": "storage",
+      "path": "packages/server/data/peercast.db",
+      "label": "Local/generated SQLite data (not source)"
+    },
+    {
+      "id": "webrtc",
+      "kind": "protocol",
+      "path": "packages/web/src/lib/peer.ts",
+      "label": "Direct WebRTC media/data"
+    },
+    {
+      "id": "auth-flow",
+      "kind": "flow",
+      "path": "docs/PROJECT-KNOWLEDGE-GRAPH.md",
+      "label": "JWT + HttpOnly refresh flow"
+    },
+    {
+      "id": "broadcast-flow",
+      "kind": "flow",
+      "path": "docs/PROJECT-KNOWLEDGE-GRAPH.md",
+      "label": "Broadcast and viewer flow"
+    }
+  ],
+  "edges": [
+    { "from": "repo", "to": "shared", "type": "contains" },
+    { "from": "repo", "to": "server", "type": "contains" },
+    { "from": "repo", "to": "web", "type": "contains" },
+    { "from": "repo", "to": "extension", "type": "contains" },
+    { "from": "repo", "to": "e2e", "type": "contains" },
+    { "from": "shared", "to": "shared-models", "type": "exports" },
+    { "from": "shared", "to": "shared-api", "type": "exports" },
+    { "from": "shared", "to": "shared-validation", "type": "exports" },
+    { "from": "shared", "to": "server", "type": "contract_dependency" },
+    { "from": "shared", "to": "web", "type": "contract_dependency" },
+    { "from": "shared", "to": "extension", "type": "contract_dependency" },
+    { "from": "server-index", "to": "server-config", "type": "loads" },
+    { "from": "server-index", "to": "server-db", "type": "initializes" },
+    { "from": "server-index", "to": "server-app", "type": "composes" },
+    { "from": "server-app", "to": "server-routes", "type": "mounts" },
+    { "from": "server-app", "to": "server-peer", "type": "mounts" },
+    { "from": "server-app", "to": "server-config", "type": "uses" },
+    { "from": "server-routes", "to": "server-repos", "type": "calls" },
+    { "from": "server-routes", "to": "server-auth", "type": "calls" },
+    { "from": "server-repos", "to": "server-db", "type": "queries" },
+    { "from": "server-auth", "to": "server-db", "type": "persists_tokens" },
+    {
+      "from": "server-peer",
+      "to": "server-auth",
+      "type": "consumes_signaling_tickets"
+    },
+    { "from": "server-routes", "to": "shared-api", "type": "implements" },
+    { "from": "web-app", "to": "web-broadcast", "type": "routes_to" },
+    { "from": "web-app", "to": "web-viewer", "type": "routes_to" },
+    { "from": "web-broadcast", "to": "web-peer", "type": "hosts" },
+    { "from": "web-viewer", "to": "web-peer", "type": "dials" },
+    { "from": "web-api", "to": "server-routes", "type": "calls" },
+    { "from": "web-peer", "to": "server-peer", "type": "signals_through" },
+    { "from": "web-peer", "to": "webrtc", "type": "establishes" },
+    {
+      "from": "web-broadcast",
+      "to": "server-routes",
+      "type": "starts_and_reports"
+    },
+    { "from": "web-viewer", "to": "server-routes", "type": "resolves_session" },
+    { "from": "web-sw", "to": "web", "type": "caches_assets" },
+    { "from": "ext-popup", "to": "ext-background", "type": "messages" },
+    { "from": "ext-background", "to": "ext-offscreen", "type": "messages" },
+    { "from": "ext-offscreen", "to": "server-routes", "type": "calls" },
+    { "from": "ext-offscreen", "to": "server-peer", "type": "signals_through" },
+    { "from": "ci", "to": "shared", "type": "builds_first" },
+    { "from": "ci", "to": "web", "type": "builds" },
+    { "from": "ci", "to": "server", "type": "builds_and_deploys" },
+    { "from": "docker", "to": "shared", "type": "builds" },
+    { "from": "docker", "to": "web", "type": "builds" },
+    { "from": "docker", "to": "server", "type": "builds" },
+    { "from": "compose", "to": "docker", "type": "runs" },
+    { "from": "compose", "to": "sqlite", "type": "persists" },
+    { "from": "compose", "to": "webrtc", "type": "optionally_relays_via_turn" },
+    { "from": "auth-flow", "to": "server-auth", "type": "describes" },
+    { "from": "broadcast-flow", "to": "web-peer", "type": "describes" },
+    { "from": "broadcast-flow", "to": "server-routes", "type": "describes" }
+  ],
+  "invariants": [
+    "Build @peer-cast/shared before web or server.",
+    "All SQL stays in server repos and uses prepared statements.",
+    "peerId is withheld from discovery/profile/detail serializers.",
+    "Protected broadcasts require both server resolution and host verification.",
+    "Media and chat flow peer-to-peer; the server only handles rendezvous/signaling.",
+    "Production requires a strong JWT_SECRET and HTTPS for browser capture/WebRTC.",
+    "SQLite and recording files must live on persistent storage.",
+    "PWA pages already running do not replace their active JavaScript bundle until reload."
+  ],
+  "primaryFlows": [
+    {
+      "id": "register-login",
+      "steps": ["web-api", "server-routes", "server-auth", "server-db"]
+    },
+    {
+      "id": "public-broadcast",
+      "steps": [
+        "web-broadcast",
+        "web-api",
+        "server-routes",
+        "server-db",
+        "web-peer",
+        "server-peer",
+        "webrtc"
+      ]
+    },
+    {
+      "id": "protected-viewer",
+      "steps": [
+        "web-viewer",
+        "web-api",
+        "server-routes",
+        "server-auth",
+        "server-peer",
+        "web-peer",
+        "webrtc"
+      ]
+    },
+    {
+      "id": "extension-broadcast",
+      "steps": [
+        "ext-popup",
+        "ext-background",
+        "ext-offscreen",
+        "server-routes",
+        "server-peer",
+        "webrtc"
+      ]
+    },
+    { "id": "oci-deploy", "steps": ["ci", "docker", "server"] }
+  ],
+  "lookup": {
+    "apiRoutes": "packages/server/src/routes + packages/web/src/store/api.ts",
+    "database": "packages/server/src/db/index.ts + packages/server/src/repos",
+    "authentication": "packages/server/src/lib/auth.ts + packages/server/src/middleware/auth.ts + packages/server/src/routes/auth.ts",
+    "webrtc": "packages/web/src/lib/peer.ts + packages/web/src/pages/BroadcastPage.tsx + packages/web/src/pages/ViewerPage.tsx + packages/server/src/signaling/peerServer.ts",
+    "pwa": "packages/web/src/sw.ts + packages/web/vite.config.ts + packages/server/src/app.ts",
+    "extension": "packages/extension/background.js + packages/extension/offscreen.js + packages/extension/popup.js",
+    "deployment": ".github/workflows/ci.yml + Dockerfile + docker-compose.yml + README.md",
+    "tests": "packages/server/test + packages/web/src/**/*.test.* + tests/e2e/specs"
+  }
+}
