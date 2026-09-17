@@ -1,7 +1,7 @@
 {
   "schema": "peer-cast.project-knowledge-graph.v1",
   "generatedAt": "2026-09-17",
-  "sourceCommit": "380ecc8",
+  "sourceCommit": "59ab636",
   "description": "Current-state architecture and dependency graph for PeerCast.",
   "nodes": [
     {
@@ -129,6 +129,12 @@
       "kind": "page",
       "path": "packages/web/src/pages/BroadcastPage.tsx",
       "label": "Web broadcaster"
+    },
+    {
+      "id": "mobile-capture",
+      "kind": "feature",
+      "path": "packages/web/src/pages/BroadcastPage.tsx",
+      "label": "Mobile camera, microphone, and lens switching"
     },
     {
       "id": "web-viewer",
@@ -260,7 +266,18 @@
     { "from": "compose", "to": "webrtc", "type": "optionally_relays_via_turn" },
     { "from": "auth-flow", "to": "server-auth", "type": "describes" },
     { "from": "broadcast-flow", "to": "web-peer", "type": "describes" },
-    { "from": "broadcast-flow", "to": "server-routes", "type": "describes" }
+    { "from": "broadcast-flow", "to": "server-routes", "type": "describes" },
+    { "from": "web-broadcast", "to": "mobile-capture", "type": "implements" },
+    {
+      "from": "mobile-capture",
+      "to": "web-peer",
+      "type": "replaces_video_sender_tracks"
+    },
+    {
+      "from": "mobile-capture",
+      "to": "shared-models",
+      "type": "uses_capture_source_contract"
+    }
   ],
   "invariants": [
     "Build @peer-cast/shared before web or server.",
@@ -268,6 +285,8 @@
     "peerId is withheld from discovery/profile/detail serializers.",
     "Protected broadcasts require both server resolution and host verification.",
     "Media and chat flow peer-to-peer; the server only handles rendezvous/signaling.",
+    "Mobile capture uses getUserMedia: camera + microphone, camera-only, or microphone-only.",
+    "Live mobile lens switching replaces outgoing WebRTC video tracks before stopping the old track.",
     "Production requires a strong JWT_SECRET and HTTPS for browser capture/WebRTC.",
     "SQLite and recording files must live on persistent storage.",
     "PWA pages already running do not replace their active JavaScript bundle until reload."

@@ -1,7 +1,7 @@
 # PeerCast Project Knowledge Graph
 
 > Current-state index for maintenance, debugging, and feature work. Generated
-> from the repository source at commit `380ecc8` (2026-09-17). The companion
+> from the repository source at commit `59ab636` (2026-09-17). The companion
 > `project-knowledge-graph.json` contains the same core relationships in a
 > machine-readable form.
 
@@ -214,8 +214,15 @@ Key implementation points:
   sampling.
 - The viewer dummy stream includes video and preferably silent audio so the
   offer has matching SDP media sections.
-- `BroadcastPage.tsx` owns `getDisplayMedia`, host construction, start/end
-  API calls, stats heartbeat, and capture cleanup.
+- `BroadcastPage.tsx` owns capture selection, host construction, start/end API
+  calls, stats heartbeat, and capture cleanup. Desktop capture uses
+  `getDisplayMedia`; mobile capture uses `getUserMedia` with `camera`,
+  `camera-only`, or `microphone` modes.
+- Live mobile camera switching acquires a replacement track with the opposite
+  `facingMode`, then `BroadcastHost.replaceVideoTrack()` replaces the outgoing
+  video sender track for every connected viewer before stopping the old track.
+- The `CaptureSource` contract is shared by `packages/shared`, validated by
+  `server/src/routes/broadcasts.ts`, and persisted as broadcast metadata.
 - `ViewerPage.tsx` resolves the session, mints signaling auth, attaches the
   remote stream, and retries after close with exponential backoff.
 - Media never traverses Express or SQLite.
