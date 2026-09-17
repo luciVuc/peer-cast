@@ -141,11 +141,13 @@ export const config = {
    * Web + extension hosts report stats every ~2 s; 90 s tolerates drops. */
   staleLiveMs: int("STALE_LIVE_MS", 90_000),
 
-  /** Usernames (comma-separated) promoted to admin on boot / registration. */
+  /** Usernames allowed to use the operator-controlled bootstrap secret. */
   adminUsernames: str("ADMIN_USERNAMES", "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
+  /** Required to bootstrap a designated admin account during registration. */
+  adminBootstrapSecret: str("ADMIN_BOOTSTRAP_SECRET", ""),
 
   /** How new accounts may be created: open | invite | closed. */
   registrationMode: ((): "open" | "invite" | "closed" => {

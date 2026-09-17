@@ -3,8 +3,8 @@
 # Detects Docker/Podman, generates secrets, creates .env, and starts the stack.
 #
 # Usage (pick one):
-#   git clone https://github.com/<gh-user>/peer-cast.git && cd peer-cast && bash setup.sh
-#   curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh | bash
+#   git clone https://github.com/luciVuc/peer-cast.git && cd peer-cast && bash setup.sh
+#   Download this script, inspect it, then run: bash setup.sh
 #
 # Interactive prompts:
 #   1. Your public domain or IP  (required)
@@ -24,7 +24,8 @@ warn()  { printf "${YELLOW}[warn]${NC}  %s\n" "$*"; }
 err()   { printf "${RED}[error]${NC} %s\n" "$*" >&2; exit 1; }
 
 # ── Locate or clone the repo ──────────────────────────────────────────────
-REPO_URL="https://github.com/<gh-user>/peer-cast.git"
+REPO_URL="https://github.com/luciVuc/peer-cast.git"
+REPO_REF="9ed4ebde104dc5311c5c312f8c20f9f3960654bd"
 
 # If we're already inside a peer-cast repo, use it.
 if [ -f "packages/server/package.json" ] 2>/dev/null; then
@@ -37,6 +38,7 @@ else
   WORKDIR="$(mktemp -d)/peer-cast"
   info "Cloning PeerCast into ${WORKDIR} ..."
   git clone --depth 1 "${REPO_URL}" "${WORKDIR}"
+  git -C "${WORKDIR}" checkout --detach "${REPO_REF}"
 fi
 cd "${WORKDIR}"
 
@@ -80,9 +82,13 @@ SMTP_CHOICE="${SMTP_CHOICE:-N}"
 
 # ── Write .env ─────────────────────────────────────────────────────────────
 JWT_SECRET_VAL="$(openssl rand -hex 32)"
+ADMIN_BOOTSTRAP_SECRET_VAL="$(openssl rand -hex 32)"
 # Preserve existing JWT_SECRET if upgrading
 if [ -f .env ] && grep -q '^JWT_SECRET=' .env; then
   JWT_SECRET_VAL="$(grep '^JWT_SECRET=' .env | cut -d= -f2-)"
+fi
+if [ -f .env ] && grep -q '^ADMIN_BOOTSTRAP_SECRET=' .env; then
+  ADMIN_BOOTSTRAP_SECRET_VAL="$(grep '^ADMIN_BOOTSTRAP_SECRET=' .env | cut -d= -f2-)"
 fi
 
 cat > .env <<EOF
@@ -96,12 +102,14 @@ PUBLIC_SECURE=true
 JWT_SECRET=${JWT_SECRET_VAL}
 DATABASE_FILE=/data/peercast.db
 ADMIN_USERNAMES=${ADMIN}
+ADMIN_BOOTSTRAP_SECRET=${ADMIN_BOOTSTRAP_SECRET_VAL}
 REGISTRATION_MODE=open
 REQUIRE_EMAIL_VERIFICATION=false
 APP_URL=https://${DOMAIN}
 APP_NAME=PeerCast
 CORS_ORIGINS=*
 EOF
+printf "${BOLD}Admin bootstrap secret (keep private; required when registering @%s):${NC}\n%s\n" "${ADMIN}" "$(grep '^ADMIN_BOOTSTRAP_SECRET=' .env | cut -d= -f2-)"
 
 if [ "${SMTP_CHOICE}" = "y" ] || [ "${SMTP_CHOICE}" = "Y" ]; then
   echo ""

@@ -73,8 +73,9 @@ Open <http://localhost:5173> and register an account.
 In dev mode, if you haven't configured SMTP, **verification emails are printed
 to the server terminal** — copy the link from there to verify your address.
 
-> **Tip:** set `ADMIN_USERNAMES=yourhandle` in a `.env` file at the repo root
-> before registering, and your account will be automatically promoted to admin.
+> **Tip:** set `ADMIN_USERNAMES=yourhandle` and a random
+> `ADMIN_BOOTSTRAP_SECRET` in `.env`. Enter that secret in the registration
+> form only when creating the designated admin account.
 
 ---
 
@@ -173,6 +174,7 @@ PUBLIC_HOST=peercast.example.com   # your domain or public IP
 PUBLIC_SECURE=true                  # you ARE putting this behind TLS, right?
 APP_URL=https://peercast.example.com
 ADMIN_USERNAMES=alice               # the handle you'll register as admin
+ADMIN_BOOTSTRAP_SECRET=<separate random secret>
 ```
 
 ```bash
@@ -256,8 +258,10 @@ After the server is up, work through this list in order.
 ### 1 — Register the admin account
 
 Navigate to `https://your-domain/register` and create the account whose
-username you put in `ADMIN_USERNAMES`. The server promotes it to admin on the
-spot. You'll see an **Admin** link appear in the navigation bar.
+username you put in `ADMIN_USERNAMES`. Enter `ADMIN_BOOTSTRAP_SECRET` in the
+optional admin bootstrap field. The server promotes it to admin only when both
+the configured handle and secret match. You'll see an **Admin** link appear in
+the navigation bar.
 
 > **Registration modes:** By default, registration is `open` — anyone can
 > create an account. Lock this down after your initial setup if you want a
@@ -270,8 +274,8 @@ spot. You'll see an **Admin** link appear in the navigation bar.
 > | `closed`         | No new registrations            |
 >
 > Switch mode by setting `REGISTRATION_MODE=invite` (or `closed`) in `.env`
-> and restarting. Designated `ADMIN_USERNAMES` can always register regardless
-> of mode — so you can never lock yourself out.
+> and restarting. A designated admin still needs the bootstrap secret for the
+> first registration; keep that secret offline and do not commit it.
 
 ### 2 — Set up email (optional but strongly recommended)
 
@@ -418,10 +422,8 @@ leave the server as plaintext beyond the TLS boundary.
 - **No predefined admin, root, or superuser.** A fresh database is completely
   empty (schema created with `CREATE TABLE IF NOT EXISTS` — no seeding). The
   first account you register is just the first user, with no special powers.
-- **Admins are designated via `ADMIN_USERNAMES`** (comma-separated handles).
-  They are promoted on registration, on login, and on every server boot.
-  Designated admins can **always register regardless of `REGISTRATION_MODE`**
-  — so the instance can always be bootstrapped.
+- **Admins are bootstrapped with `ADMIN_USERNAMES` plus
+  `ADMIN_BOOTSTRAP_SECRET`**. The handle alone never grants admin privileges.
 - **Two roles: `user` and `admin`.** Regular users own only their own resources.
   Admins get the `/admin` moderation surface and can promote/demote others.
 - **Registration modes** (`REGISTRATION_MODE`):
@@ -647,11 +649,12 @@ a startup warning or break the feature if unset.
 
 ### Admin & access control
 
-| Variable                     | Default  | Required | Description                                                                                                                          |
-| ---------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `ADMIN_USERNAMES`            | _(none)_ | —        | Comma-separated handles promoted to `admin` on register/login and every boot. Can always register regardless of `REGISTRATION_MODE`. |
-| `REGISTRATION_MODE`          | `open`   | —        | `open` (anyone) \| `invite` (needs a code) \| `closed` (no new accounts)                                                             |
-| `REQUIRE_EMAIL_VERIFICATION` | `false`  | —        | `true` = hard-block login until email verified. Default is soft (banner only).                                                       |
+| Variable                     | Default  | Required | Description                                                                            |
+| ---------------------------- | -------- | -------- | -------------------------------------------------------------------------------------- |
+| `ADMIN_USERNAMES`            | _(none)_ | —        | Comma-separated handles allowed to use the operator-controlled admin bootstrap secret. |
+| `ADMIN_BOOTSTRAP_SECRET`     | _(none)_ | —        | Secret required with a configured handle to bootstrap its first admin account.         |
+| `REGISTRATION_MODE`          | `open`   | —        | `open` (anyone) \| `invite` (needs a code) \| `closed` (no new accounts)               |
+| `REQUIRE_EMAIL_VERIFICATION` | `false`  | —        | `true` = hard-block login until email verified. Default is soft (banner only).         |
 
 ### Signaling (PeerJS)
 

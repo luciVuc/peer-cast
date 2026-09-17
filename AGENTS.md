@@ -164,10 +164,10 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
 
 14. **SQLite path is a Docker volume** (`/data`). Never commit `*.db` files.
 
-15. **Admin is opt-in via `ADMIN_USERNAMES`.** A fresh DB is empty — no implicit
-    first-user-is-admin. Designated handles are promoted on register/login and
-    on every boot. They can **always register** even in `invite`/`closed` mode
-    (bootstrap). Two roles only: `user` | `admin`. Bans are enforced on every
+15. **Admin is opt-in via `ADMIN_USERNAMES` + `ADMIN_BOOTSTRAP_SECRET`.** A fresh
+    DB is empty — no implicit first-user-is-admin, and a claimable username
+    never grants admin. The configured handle must supply the operator secret
+    during first registration. Two roles only: `user` | `admin`. Bans are enforced on every
     authenticated request (`requireAuth` re-reads the live row) — keep this.
     `REGISTRATION_MODE` (open|invite|closed) gates non-admin registration; invite
     codes live in the `invites` table, minted via `/admin`.

@@ -10,6 +10,7 @@ configRouter.get("/", (_req, res) => {
     appName: config.appName,
     version: config.version,
     registration: config.registrationMode,
+    adminBootstrap: !!config.adminBootstrapSecret,
     signal: {
       host: config.signal.host,
       port: config.signal.port,

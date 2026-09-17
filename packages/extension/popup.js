@@ -114,10 +114,19 @@ $("signInBtn").addEventListener("click", async () => {
   // Request the narrowest host permission for this specific origin.
   let origin;
   try {
-    origin = new URL(url).origin + "/*";
+    const parsed = new URL(url);
+    const local =
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "[::1]" ||
+      parsed.hostname === "::1";
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
+      throw new Error("Remote PeerCast servers must use HTTPS.");
+    }
+    origin = parsed.origin + "/*";
   } catch {
     err.hidden = false;
-    err.textContent = "Invalid server URL.";
+    err.textContent = "Use an HTTPS server URL (HTTP is allowed only on localhost).";
     return;
   }
   const granted = await chrome.permissions.request({ origins: [origin] });

@@ -5,6 +5,32 @@ import {
   subscriptionsForFollowers,
 } from "../repos/notifications.js";
 
+const PUSH_SERVICE_SUFFIXES = [
+  "fcm.googleapis.com",
+  "push.services.mozilla.com",
+  "notify.windows.com",
+  "push.apple.com",
+];
+
+/** Accept only browser push-service origins, never arbitrary server URLs. */
+export function isAllowedPushEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    if (url.protocol !== "https:" || url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (
+      config.nodeEnv === "test" &&
+      (hostname === "push.example" || hostname.endsWith(".example"))
+    )
+      return true;
+    return PUSH_SERVICE_SUFFIXES.some(
+      (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Web Push (RFC 8030 / VAPID). Server-side this is fire-and-forget: it must
  * never hold up the HTTP response that triggered a notification. The server

@@ -5,7 +5,11 @@ import type {
   PushVapidKeyResponse,
 } from "@peer-cast/shared";
 import { badRequest } from "../lib/errors.js";
-import { getVapidPublicKey, vapidEnabled } from "../lib/push.js";
+import {
+  getVapidPublicKey,
+  isAllowedPushEndpoint,
+  vapidEnabled,
+} from "../lib/push.js";
 import { asyncHandler } from "../middleware/error.js";
 import { requireAuth } from "../middleware/auth.js";
 import {
@@ -47,6 +51,9 @@ pushRouter.post(
   asyncHandler(async (req, res) => {
     if (!vapidEnabled()) throw badRequest("push notifications are disabled");
     const body = subscribeSchema.parse(req.body) as PushSubscribeRequest;
+    if (!isAllowedPushEndpoint(body.subscription.endpoint)) {
+      throw badRequest("unsupported push service endpoint", "PUSH_ENDPOINT");
+    }
     saveSubscription(req.auth!.usernameLc, {
       endpoint: body.subscription.endpoint,
       p256dh: body.subscription.keys.p256dh,

@@ -4,21 +4,12 @@ import { configureApp } from "./app.js";
 import { config } from "./config.js";
 import { purgeExpired } from "./lib/auth.js";
 import { shutdownRedis } from "./lib/redis.js";
-import { usersRepo } from "./repos/users.js";
 import { broadcastsRepo } from "./repos/broadcasts.js";
 
 const app = express();
 const httpServer = createServer(app);
 
 configureApp(app, { httpServer });
-
-// ─── Promote configured admins (existing accounts) on boot ───────────────
-for (const username of config.adminUsernames) {
-  if (usersRepo.getRaw(username) && usersRepo.role(username) !== "admin") {
-    usersRepo.setRole(username, "admin");
-    console.log(`[server] promoted @${username} to admin`);
-  }
-}
 
 // ─── Housekeeping ──────────────────────────────────────────────────────
 function housekeeping(): void {

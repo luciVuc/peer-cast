@@ -125,6 +125,7 @@ usersRouter.put(
       req.auth!.usernameLc,
       await hashPassword(body.newPassword),
     );
+    revokeAllRefreshTokens(req.auth!.usernameLc);
     res.json({ ok: true });
   }),
 );

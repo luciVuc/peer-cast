@@ -16,6 +16,7 @@ export function RegisterPage() {
     password: "",
     about: "",
     inviteCode: "",
+    adminBootstrapSecret: "",
   });
   const [register, { isLoading }] = useRegisterMutation();
   const dispatch = useAppDispatch();
@@ -41,6 +42,7 @@ export function RegisterPage() {
         about: form.about || null,
         inviteCode:
           mode === "invite" ? form.inviteCode.trim() || undefined : undefined,
+        adminBootstrapSecret: form.adminBootstrapSecret.trim() || undefined,
       }).unwrap();
       dispatch(loggedIn(res));
       dispatch(
@@ -55,7 +57,7 @@ export function RegisterPage() {
     }
   }
 
-  if (mode === "closed") {
+  if (mode === "closed" && !cfg?.adminBootstrap) {
     return (
       <IllustratedMessage
         icon="🔒"
@@ -74,6 +76,12 @@ export function RegisterPage() {
     <div className="mx-auto max-w-md">
       <div className="card p-8">
         <h1 className="mb-6 text-2xl font-bold">Create your account</h1>
+        {mode === "closed" && (
+          <p className="mb-4 text-sm text-slate-400">
+            Registration is closed for regular accounts. The operator can
+            bootstrap the configured administrator with the private secret.
+          </p>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label">Display name</label>
@@ -146,6 +154,21 @@ export function RegisterPage() {
               />
             </div>
           )}
+          <div>
+            <label className="label">Admin bootstrap secret (optional)</label>
+            <input
+              id="reg-adminBootstrapSecret"
+              className="input"
+              type="password"
+              value={form.adminBootstrapSecret}
+              onChange={(e) => set("adminBootstrapSecret", e.target.value)}
+              autoComplete="off"
+              placeholder="Only needed for the configured admin handle"
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              Leave blank for a regular account.
+            </p>
+          </div>
           <button
             className="btn-primary w-full"
             disabled={isLoading || !usernameOk || !passwordOk || !inviteOk}

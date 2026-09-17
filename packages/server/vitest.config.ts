@@ -12,6 +12,7 @@ export default defineConfig({
       NODE_ENV: "test",
       CORS_ORIGINS: "*",
       ADMIN_USERNAMES: "admin",
+      ADMIN_BOOTSTRAP_SECRET: "test-admin-bootstrap-secret",
     },
     // One fresh forked process per test file: each file gets its own
     // better-sqlite3 `:memory:` singleton and its own supertest ephemeral

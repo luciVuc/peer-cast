@@ -11,8 +11,21 @@
  */
 
 (function (global) {
+  function assertSecureServer(base) {
+    const url = new URL(base);
+    const local =
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]" ||
+      url.hostname === "::1";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) {
+      throw new Error("Remote PeerCast servers must use HTTPS.");
+    }
+    return url.origin;
+  }
+
   function apiUrl(base, path) {
-    return `${base.replace(/\/$/, "")}/api${path}`;
+    return `${assertSecureServer(base)}/api${path}`;
   }
 
   async function request(base, path, { method = "GET", token, body } = {}) {

@@ -60,23 +60,22 @@ Everything below is automated. Just paste one line into a terminal.
 ### Docker / Podman (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh | bash
+# Download setup.sh, inspect it, then run it locally.
 ```
 
 ### Native on Linux / Raspberry Pi (no Docker required)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh | bash
+# Download setup-native.sh, inspect it, then run it locally.
 ```
 
 > **The scripts will ask you a few questions** (domain, admin username, SMTP
 > optional). They then generate secrets, write `.env`, build, and start —
 > with auto-start on boot. When they finish, open the printed URL and register
-> your admin account.
+> your admin account using the printed admin bootstrap secret.
 
-> **Check the URL works first:** replace `<gh-user>` with the actual GitHub
-> username. You can verify the script exists at:
-> `https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh`
+> **Check the URL works first:** verify the script exists at:
+> `https://raw.githubusercontent.com/luciVuc/peer-cast/master/setup.sh`
 > (it should show shell script text in your browser).
 
 ---
@@ -102,7 +101,7 @@ sudo apt install -y podman podman-compose
 ### 4.2 Get the code
 
 ```bash
-git clone https://github.com/<gh-user>/peer-cast.git
+git clone https://github.com/luciVuc/peer-cast.git
 cd peer-cast
 ```
 
@@ -147,7 +146,7 @@ Raspberry Pi (Zero 2 can work; Pi 3/4 recommended) or any Linux laptop/VPS.
 ### 5.1 One-liner (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh | bash
+Download `setup-native.sh`, inspect it, then run `bash setup-native.sh`.
 ```
 
 That's it. The script installs Node.js 22, clones the repo, builds, writes
@@ -159,11 +158,12 @@ If you prefer doing it by hand:
 
 ```bash
 # 1. Install Node.js 22 (NodeSource for Debian/Ubuntu/Raspberry Pi OS)
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+Install Node.js 20+ from your distribution's signed package repository or
+official package instructions; do not execute an unreviewed remote script.
 sudo apt install -y nodejs build-essential python3 make g++ git
 
 # 2. Clone
-git clone https://github.com/<gh-user>/peer-cast.git
+git clone https://github.com/luciVuc/peer-cast.git
 cd peer-cast
 
 # 3. Install deps (shared types build first)
@@ -236,12 +236,13 @@ Both the Docker and native options work on the same device. Pick one.
 
 ```bash
 # --- NATIVE (no Docker, recommended for Pi) ---
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh | bash
+Download `setup-native.sh`, inspect it, then run `bash setup-native.sh`.
 
 # --- or DOCKER ---
-curl -fsSL https://get.docker.com | sh
+Install Docker using the vendor's documented package instructions; do not pipe
+an unreviewed script directly to a shell.
 sudo usermod -aG docker $USER   # log out & back in
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh | bash
+Download `setup.sh`, inspect it, then run `bash setup.sh`.
 ```
 
 > **Pi note:** The build includes `better-sqlite3` which compiles natively —
@@ -252,13 +253,13 @@ curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh |
 
 ```bash
 # --- NATIVE (lighter on resources, good for old laptops) ---
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh | bash
+Download `setup-native.sh`, inspect it, then run `bash setup-native.sh`.
 
 # --- or DOCKER ---
 sudo apt update && sudo apt install -y docker.io docker-compose-plugin git
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER && exit   # log back in
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh | bash
+Download `setup.sh`, inspect it, then run `bash setup.sh`.
 ```
 
 ### Start on boot
@@ -299,10 +300,10 @@ sudo systemctl enable --now docker
 sudo usermod -aG docker $USER && exit    # reconnect afterwards
 
 # Then:
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh | bash
+Download `setup.sh`, inspect it, then run `bash setup.sh`.
 
 # Or native path (no Docker needed):
-curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh | bash
+Download `setup-native.sh`, inspect it, then run `bash setup-native.sh`.
 ```
 
 Enter your public IP or domain when prompted.
@@ -449,7 +450,8 @@ to Cloudflare's then add it to your CF account.
 ### 10.1 Register the admin account
 
 1. Open `https://your-domain/register`
-2. Register the username matching `ADMIN_USERNAMES` in `.env`
+2. Register the username matching `ADMIN_USERNAMES` and enter the
+   `ADMIN_BOOTSTRAP_SECRET` from `.env`
 3. The server auto-promotes it to admin — an **Admin** link appears in nav
 
 ### 10.2 Verify your email (if SMTP configured)
@@ -470,7 +472,7 @@ to Cloudflare's then add it to your CF account.
 REGISTRATION_MODE=invite     # or "closed"
 ```
 
-Restart. Admins can always register regardless of mode.
+Restart. A new designated admin still requires the bootstrap secret.
 
 ### 10.4 Try broadcasting
 
@@ -691,16 +693,16 @@ Common causes:
 
 ## Quick Reference
 
-| What                  | Command / URL                                                                                   |
-| --------------------- | ----------------------------------------------------------------------------------------------- |
-| **Docker: one-liner** | `curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup.sh \| bash`        |
-| **Native: one-liner** | `curl -fsSL https://raw.githubusercontent.com/<gh-user>/peer-cast/main/setup-native.sh \| bash` |
-| Docker start          | `docker compose up -d`                                                                          |
-| Docker start + TURN   | `docker compose --profile turn up -d`                                                           |
-| Native start          | `sudo systemctl start peercast`                                                                 |
-| Native status/logs    | `systemctl status peercast` / `journalctl -u peercast -f`                                       |
-| Health check          | `curl http://localhost:8787/api/health`                                                         |
-| Backup (Docker)       | `docker cp peercast:/data/peercast.db ./backup.db`                                              |
-| Backup (native)       | `cp ~/peer-cast/data/peercast.db ./backup.db`                                                   |
-| Generate JWT secret   | `openssl rand -hex 32`                                                                          |
-| Chrome extension      | `chrome://extensions` → Load unpacked → `packages/extension/`                                   |
+| What                | Command / URL                                                            |
+| ------------------- | ------------------------------------------------------------------------ |
+| **Docker**          | Download `setup.sh`, inspect it, then run `bash setup.sh`.               |
+| **Native**          | Download `setup-native.sh`, inspect it, then run `bash setup-native.sh`. |
+| Docker start        | `docker compose up -d`                                                   |
+| Docker start + TURN | `docker compose --profile turn up -d`                                    |
+| Native start        | `sudo systemctl start peercast`                                          |
+| Native status/logs  | `systemctl status peercast` / `journalctl -u peercast -f`                |
+| Health check        | `curl http://localhost:8787/api/health`                                  |
+| Backup (Docker)     | `docker cp peercast:/data/peercast.db ./backup.db`                       |
+| Backup (native)     | `cp ~/peer-cast/data/peercast.db ./backup.db`                            |
+| Generate JWT secret | `openssl rand -hex 32`                                                   |
+| Chrome extension    | `chrome://extensions` → Load unpacked → `packages/extension/`            |

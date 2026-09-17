@@ -38,6 +38,8 @@ export interface RegisterRequest {
   about?: string | null;
   /** Required when the server's registration mode is "invite". */
   inviteCode?: string;
+  /** Required only when bootstrapping a configured administrator handle. */
+  adminBootstrapSecret?: string;
 }
 
 export interface LoginRequest {
@@ -345,4 +347,6 @@ export interface RuntimeConfig {
   version: string;
   /** How new accounts may be created (drives the register UI). */
   registration: RegistrationMode;
+  /** Whether the operator configured a secret-backed admin bootstrap path. */
+  adminBootstrap: boolean;
 }

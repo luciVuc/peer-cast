@@ -15,6 +15,8 @@ async function register(a: Express, username: string, inviteCode?: string) {
       displayName: username,
       password: "secret123",
       inviteCode,
+      adminBootstrapSecret:
+        username === "admin" ? "test-admin-bootstrap-secret" : undefined,
     });
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });

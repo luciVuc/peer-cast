@@ -58,15 +58,6 @@ function clearRtCookie(res: Response) {
   });
 }
 
-/** Promote a user to admin if their handle is in ADMIN_USERNAMES. */
-function maybePromote(usernameLc: string) {
-  if (config.adminUsernames.includes(usernameLc)) {
-    if (usersRepo.role(usernameLc) !== "admin") {
-      usersRepo.setRole(usernameLc, "admin");
-    }
-  }
-}
-
 const registerSchema = z.object({
   username: z
     .string()
@@ -78,6 +69,7 @@ const registerSchema = z.object({
     .min(PASSWORD_MIN, `password must be at least ${PASSWORD_MIN} characters`),
   about: z.string().max(ABOUT_MAX).nullish(),
   inviteCode: z.string().trim().min(1).max(64).optional(),
+  adminBootstrapSecret: z.string().min(1).max(256).optional(),
 });
 
 /** Issue an access token, set the refresh-token cookie, return the response body. */
@@ -101,11 +93,16 @@ authRouter.post(
     const body = registerSchema.parse(req.body);
     const usernameLc = body.username.toLowerCase();
 
-    // Gate on the server's registration mode. Designated admins
-    // (ADMIN_USERNAMES) always bypass the gate so the instance can be
-    // bootstrapped even in invite/closed mode.
+    // A configured admin handle is only special when paired with the
+    // operator-controlled bootstrap secret. The username alone is claimable.
     const isDesignatedAdmin = config.adminUsernames.includes(usernameLc);
-    if (!isDesignatedAdmin) {
+    const bootstrapSecret =
+      body.adminBootstrapSecret ?? req.get("X-Admin-Bootstrap-Secret") ?? "";
+    const isAdminBootstrap =
+      isDesignatedAdmin &&
+      !!config.adminBootstrapSecret &&
+      bootstrapSecret === config.adminBootstrapSecret;
+    if (!isAdminBootstrap) {
       if (config.registrationMode === "closed") {
         throw forbidden("registration is closed", "REGISTRATION_CLOSED");
       }
@@ -128,7 +125,7 @@ authRouter.post(
 
     // Consume the invite only after the username/email checks pass, so a code
     // isn't burned on a duplicate-account attempt.
-    if (!isDesignatedAdmin && config.registrationMode === "invite") {
+    if (!isAdminBootstrap && config.registrationMode === "invite") {
       if (!invitesRepo.consume(body.inviteCode!.toUpperCase())) {
         throw forbidden("invalid or expired invite code", "INVITE_INVALID");
       }
@@ -142,7 +139,7 @@ authRouter.post(
       about: body.about?.trim() || null,
       passwordHash,
     });
-    maybePromote(usernameLc);
+    if (isAdminBootstrap) usersRepo.setRole(usernameLc, "admin");
 
     // Fire off a verification email (best-effort; never blocks registration).
     try {
@@ -187,7 +184,6 @@ authRouter.post(
         "EMAIL_UNVERIFIED",
       );
     }
-    maybePromote(user.username_lc);
     res.json(authResponse(res, user.username_lc, user.username));
   }),
 );

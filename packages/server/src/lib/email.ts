@@ -36,12 +36,18 @@ export async function sendEmail(opts: MailOptions): Promise<void> {
   const transport = getTransport();
   if (!transport) {
     // Stdout fallback: useful in dev + single-operator self-hosted setups.
+    // Recovery links are bearer credentials; keep the fallback useful without
+    // putting live tokens into systemd/container logs.
+    const safeText = opts.text.replace(
+      /([?&](?:token|code)=)[^&\s]+/gi,
+      "$1[redacted]",
+    );
     console.log(
       `\n[email] ─────────────────────────────────────\n` +
         `To:      ${opts.to}\n` +
         `Subject: ${opts.subject}\n` +
         `─────────────────────────────────────────────\n` +
-        `${opts.text}\n` +
+        `${safeText}\n` +
         `─────────────────────────────────────────────\n`,
     );
     return;
