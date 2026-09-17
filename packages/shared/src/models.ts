@@ -19,7 +19,8 @@ export type RegistrationMode = "open" | "invite" | "closed";
 export type BroadcastStatus = "live" | "ended";
 
 /** How the broadcast media is being captured. */
-export type CaptureSource = "tab" | "screen" | "window" | "camera";
+export type CaptureSource =
+  "tab" | "screen" | "window" | "camera" | "camera-only" | "microphone";
 
 /** Public-safe view of a registered user (never includes secrets). */
 export interface PublicUser {

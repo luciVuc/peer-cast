@@ -42,7 +42,14 @@ const startSchema = z.object({
   title: z.string().trim().min(1).max(TITLE_MAX),
   description: z.string().max(1000).nullish(),
   access: z.enum(["public", "authenticated", "code"]),
-  source: z.enum(["tab", "screen", "window", "camera"]),
+  source: z.enum([
+    "tab",
+    "screen",
+    "window",
+    "camera",
+    "camera-only",
+    "microphone",
+  ]),
   peerId: z.string().min(1).max(200),
   accessCode: z
     .string()

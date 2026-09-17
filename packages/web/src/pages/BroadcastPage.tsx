@@ -57,6 +57,9 @@ export function BroadcastPage() {
       ? "screen"
       : "camera",
   );
+  const [cameraFacingMode, setCameraFacingMode] = useState<
+    "user" | "environment"
+  >("user");
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -119,6 +122,23 @@ export function BroadcastPage() {
     }
   }, [broadcastStatus]);
 
+  async function toggleCamera() {
+    const track = broadcastService.stream?.getVideoTracks()[0];
+    if (!track) return;
+    const nextFacingMode = cameraFacingMode === "user" ? "environment" : "user";
+    try {
+      await track.applyConstraints({ facingMode: { exact: nextFacingMode } });
+      setCameraFacingMode(nextFacingMode);
+    } catch {
+      dispatch(
+        addToast(
+          "This device could not switch cameras while live. Stop and start again.",
+          "warning",
+        ),
+      );
+    }
+  }
+
   // ── Go live ─────────────────────────────────────────────────────────────
 
   async function goLive() {
@@ -138,12 +158,26 @@ export function BroadcastPage() {
         );
       }
       const captureSource =
-        source === "camera" || !canCaptureScreen ? "camera" : source;
+        !canCaptureScreen &&
+        source !== "camera" &&
+        source !== "camera-only" &&
+        source !== "microphone"
+          ? "camera"
+          : source;
       const stream =
-        captureSource === "camera"
+        captureSource === "camera" ||
+        captureSource === "camera-only" ||
+        captureSource === "microphone"
           ? await navigator.mediaDevices.getUserMedia({
-              video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-              audio: true,
+              video:
+                captureSource === "microphone"
+                  ? false
+                  : {
+                      width: { ideal: 1280 },
+                      height: { ideal: 720 },
+                      facingMode: { ideal: cameraFacingMode },
+                    },
+              audio: captureSource !== "camera-only",
             })
           : await navigator.mediaDevices.getDisplayMedia({
               video: { frameRate: 30 },
@@ -360,12 +394,18 @@ export function BroadcastPage() {
             {!isLive && !isStarting && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400">
                 <span className="text-5xl">
-                  {source === "camera" ? "📹" : "🖥️"}
+                  {source === "microphone"
+                    ? "🎙️"
+                    : source === "camera" || source === "camera-only"
+                      ? "📹"
+                      : "🖥️"}
                 </span>
                 <p>
-                  {source === "camera"
-                    ? "Your camera preview appears here once you go live."
-                    : "Your screen preview appears here once you go live."}
+                  {source === "microphone"
+                    ? "Your microphone is ready once you go live."
+                    : source === "camera" || source === "camera-only"
+                      ? "Your camera preview appears here once you go live."
+                      : "Your screen preview appears here once you go live."}
                 </p>
               </div>
             )}
@@ -428,6 +468,8 @@ export function BroadcastPage() {
                   onChange={(e) => setSource(e.target.value as typeof source)}
                 >
                   <option value="camera">Camera and microphone</option>
+                  <option value="camera-only">Camera only</option>
+                  <option value="microphone">Microphone only</option>
                   {canCaptureScreen && (
                     <>
                       <option value="screen">Entire screen</option>
@@ -478,6 +520,17 @@ export function BroadcastPage() {
             </div>
           ) : (
             <div className="space-y-4">
+              {(source === "camera" || source === "camera-only") &&
+              broadcastService.stream?.getVideoTracks().length ? (
+                <button
+                  type="button"
+                  className="btn-ghost w-full text-sm"
+                  onClick={() => void toggleCamera()}
+                >
+                  Switch to {cameraFacingMode === "user" ? "rear" : "front"}{" "}
+                  camera
+                </button>
+              ) : null}
               <div>
                 <label className="label">Viewer link</label>
                 <div className="flex gap-2">

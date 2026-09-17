@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   status        TEXT NOT NULL,            -- 'live' | 'ended'
   access        TEXT NOT NULL,            -- 'public' | 'authenticated' | 'code'
   access_code   TEXT,                     -- present when access = 'code'
-  source        TEXT NOT NULL,            -- 'tab' | 'screen' | 'window' | 'camera'
+  source        TEXT NOT NULL,            -- capture source
   peer_id       TEXT,                     -- null once ended
   started_at    INTEGER NOT NULL,
   ended_at      INTEGER,

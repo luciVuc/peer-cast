@@ -316,7 +316,9 @@ Enter your public IP or domain when prompted.
 > **HTTPS is required** for broadcasting — browsers block camera/screen capture
 > and secure WebRTC without a secure context. Cloudflare Tunnel provides free
 > HTTPS automatically (Section 8). On Android, choose **Camera and
-> microphone**: many mobile browsers do not implement screen sharing.
+> microphone**, **Camera only**, or **Microphone only**: many mobile browsers
+> do not implement screen sharing. While a camera broadcast is live, use the
+> **Switch to rear/front camera** button to change lenses.
 
 ---
 
@@ -661,9 +663,11 @@ Common causes:
 - **`localhost` exception** — `http://localhost` counts as secure, so local
   testing works without HTTPS.
 - **Android screen sharing** — many Android browsers do not expose
-  `getDisplayMedia`; use the **Camera and microphone** capture source instead.
-  The app detects this automatically and hides unsupported screen-sharing
-  choices.
+  `getDisplayMedia`; use **Camera and microphone**, **Camera only**, or
+  **Microphone only** instead. The app detects this automatically and hides
+  unsupported screen-sharing choices. Camera broadcasts can switch between
+  front and rear cameras while live when the browser supports camera
+  constraints.
 
 ### Viewers can't connect
 
