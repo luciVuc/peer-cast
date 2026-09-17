@@ -430,6 +430,33 @@ export class BroadcastHost {
     this.timer = window.setInterval(() => void this.sample(), 2000);
   }
 
+  /** Replace the outgoing camera track without renegotiating viewer calls. */
+  async replaceVideoTrack(track: MediaStreamTrack): Promise<void> {
+    const senders = [...this.calls]
+      .map(
+        (call) =>
+          (call as unknown as { peerConnection?: RTCPeerConnection })
+            .peerConnection,
+      )
+      .flatMap((pc) =>
+        pc
+          ? pc.getSenders().filter((sender) => sender.track?.kind === "video")
+          : [],
+      );
+
+    try {
+      await Promise.all(senders.map((sender) => sender.replaceTrack(track)));
+    } catch (err) {
+      track.stop();
+      throw err;
+    }
+
+    const oldTracks = this.opts.stream.getVideoTracks();
+    oldTracks.forEach((oldTrack) => this.opts.stream.removeTrack(oldTrack));
+    this.opts.stream.addTrack(track);
+    oldTracks.forEach((oldTrack) => oldTrack.stop());
+  }
+
   private async sample() {
     const track = this.opts.stream.getVideoTracks()[0];
     const settings = track?.getSettings();

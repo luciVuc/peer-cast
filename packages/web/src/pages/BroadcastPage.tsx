@@ -60,6 +60,7 @@ export function BroadcastPage() {
   const [cameraFacingMode, setCameraFacingMode] = useState<
     "user" | "environment"
   >("user");
+  const [switchingCamera, setSwitchingCamera] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -123,19 +124,36 @@ export function BroadcastPage() {
   }, [broadcastStatus]);
 
   async function toggleCamera() {
-    const track = broadcastService.stream?.getVideoTracks()[0];
-    if (!track) return;
     const nextFacingMode = cameraFacingMode === "user" ? "environment" : "user";
+    const host = broadcastService.host;
+    const stream = broadcastService.stream;
+    if (!host || !stream?.getVideoTracks().length || switchingCamera) return;
+    setSwitchingCamera(true);
     try {
-      await track.applyConstraints({ facingMode: { exact: nextFacingMode } });
+      const replacement = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: { exact: nextFacingMode },
+        },
+        audio: false,
+      });
+      const replacementTrack = replacement.getVideoTracks()[0];
+      if (!replacementTrack) {
+        replacement.getTracks().forEach((track) => track.stop());
+        throw new Error("The selected camera did not provide a video track.");
+      }
+      await host.replaceVideoTrack(replacementTrack);
       setCameraFacingMode(nextFacingMode);
     } catch {
       dispatch(
         addToast(
-          "This device could not switch cameras while live. Stop and start again.",
+          "Could not switch cameras while live. Check camera permissions and try again.",
           "warning",
         ),
       );
+    } finally {
+      setSwitchingCamera(false);
     }
   }
 
@@ -526,9 +544,11 @@ export function BroadcastPage() {
                   type="button"
                   className="btn-ghost w-full text-sm"
                   onClick={() => void toggleCamera()}
+                  disabled={switchingCamera}
                 >
-                  Switch to {cameraFacingMode === "user" ? "rear" : "front"}{" "}
-                  camera
+                  {switchingCamera
+                    ? "Switching camera…"
+                    : `Switch to ${cameraFacingMode === "user" ? "rear" : "front"} camera`}
                 </button>
               ) : null}
               <div>
