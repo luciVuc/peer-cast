@@ -313,9 +313,10 @@ Enter your public IP or domain when prompted.
 - **Before Cloudflare:** `http://<your-public-ip>:8787`
 - **After Cloudflare Tunnel:** `https://peercast.yourdomain.com`
 
-> **HTTPS is required** for broadcasting — browsers block `getDisplayMedia`
+> **HTTPS is required** for broadcasting — browsers block camera/screen capture
 > and secure WebRTC without a secure context. Cloudflare Tunnel provides free
-> HTTPS automatically (Section 8).
+> HTTPS automatically (Section 8). On Android, choose **Camera and
+> microphone**: many mobile browsers do not implement screen sharing.
 
 ---
 
@@ -655,10 +656,14 @@ Common causes:
 
 ### Broadcasting doesn't work (no video)
 
-- **HTTPS required** — `getDisplayMedia` + secure WebRTC fail on plain HTTP.
+- **HTTPS required** — camera/screen capture and secure WebRTC fail on plain HTTP.
   Use Cloudflare Tunnel or a TLS reverse proxy.
 - **`localhost` exception** — `http://localhost` counts as secure, so local
   testing works without HTTPS.
+- **Android screen sharing** — many Android browsers do not expose
+  `getDisplayMedia`; use the **Camera and microphone** capture source instead.
+  The app detects this automatically and hides unsupported screen-sharing
+  choices.
 
 ### Viewers can't connect
 

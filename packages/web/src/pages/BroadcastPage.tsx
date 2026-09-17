@@ -46,8 +46,17 @@ export function BroadcastPage() {
   const [title, setTitle] = useState("Live broadcast");
   const [access, setAccess] = useState<AccessPolicy>("public");
   const [accessCode, setAccessCode] = useState("");
-  const [source, setSource] =
-    useState<Extract<CaptureSource, "screen" | "window" | "tab">>("screen");
+  const [canCaptureScreen, setCanCaptureScreen] = useState(
+    () =>
+      typeof navigator !== "undefined" &&
+      typeof navigator.mediaDevices?.getDisplayMedia === "function",
+  );
+  const [source, setSource] = useState<CaptureSource>(() =>
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices?.getDisplayMedia === "function"
+      ? "screen"
+      : "camera",
+  );
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -87,6 +96,16 @@ export function BroadcastPage() {
     }
   }, [me]);
 
+  // Android browsers generally support camera capture but not screen capture.
+  // Detect the API instead of relying on user-agent sniffing so this also
+  // works on embedded browsers and future platforms.
+  useEffect(() => {
+    const supported =
+      typeof navigator.mediaDevices?.getDisplayMedia === "function";
+    setCanCaptureScreen(supported);
+    if (!supported) setSource("camera");
+  }, []);
+
   // When the user returns to this page while already live, reattach the
   // stream to the preview video element (the element is re-created on mount).
   useEffect(() => {
@@ -113,10 +132,23 @@ export function BroadcastPage() {
     }
     dispatch(broadcastStarting());
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 },
-        audio: true,
-      });
+      if (!navigator.mediaDevices) {
+        throw new Error(
+          "Camera and screen sharing are unavailable. Use HTTPS and allow browser permissions.",
+        );
+      }
+      const captureSource =
+        source === "camera" || !canCaptureScreen ? "camera" : source;
+      const stream =
+        captureSource === "camera"
+          ? await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+              audio: true,
+            })
+          : await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: 30 },
+              audio: true,
+            });
       broadcastService.setStream(stream);
 
       if (videoRef.current) {
@@ -143,7 +175,7 @@ export function BroadcastPage() {
       const { broadcast } = await startBroadcastMutation({
         title: title.trim() || "Live broadcast",
         access,
-        source,
+        source: captureSource,
         peerId,
         accessCode: access === "code" ? accessCode.trim() : undefined,
       }).unwrap();
@@ -327,8 +359,14 @@ export function BroadcastPage() {
             <video ref={videoRef} className="h-full w-full" muted playsInline />
             {!isLive && !isStarting && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400">
-                <span className="text-5xl">🖥️</span>
-                <p>Your screen preview appears here once you go live.</p>
+                <span className="text-5xl">
+                  {source === "camera" ? "📹" : "🖥️"}
+                </span>
+                <p>
+                  {source === "camera"
+                    ? "Your camera preview appears here once you go live."
+                    : "Your screen preview appears here once you go live."}
+                </p>
               </div>
             )}
             {isLive && (
@@ -389,10 +427,21 @@ export function BroadcastPage() {
                   value={source}
                   onChange={(e) => setSource(e.target.value as typeof source)}
                 >
-                  <option value="screen">Entire screen</option>
-                  <option value="window">Application window</option>
-                  <option value="tab">Browser tab</option>
+                  <option value="camera">Camera and microphone</option>
+                  {canCaptureScreen && (
+                    <>
+                      <option value="screen">Entire screen</option>
+                      <option value="window">Application window</option>
+                      <option value="tab">Browser tab</option>
+                    </>
+                  )}
                 </select>
+                {!canCaptureScreen && (
+                  <p className="mt-1 text-xs text-slate-400">
+                    This browser does not support screen sharing, so camera mode
+                    is available instead.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="label">Who can watch</label>

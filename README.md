@@ -46,9 +46,11 @@ laptop, or a Raspberry Pi. No Cloudflare, no third-party services required.
 | `packages/web`       | Vite · React · Redux Toolkit · Tailwind · vite-plugin-pwa | Installable PWA: landing, dashboard, broadcaster, viewer      |
 | `packages/extension` | Chrome MV3 (vanilla JS)                                   | **Optional** broadcaster — one-click tab capture              |
 
-The web app can broadcast **directly from the browser** via `getDisplayMedia`,
-so the extension is optional — install it only for one-click tab capture or
-background broadcasting.
+The web app can broadcast **directly from the browser**. Desktop browsers use
+`getDisplayMedia` for screen, window, or tab capture; phones that do not expose
+that API use `getUserMedia` for camera and microphone broadcasts. The extension
+is optional — install it only for one-click tab capture or background
+broadcasting.
 
 ---
 
@@ -346,23 +348,23 @@ Keyboard shortcuts: `Ctrl+Shift+Y` (start tab), `Ctrl+Shift+K` (toggle),
 
 ## Features at a glance
 
-| Feature                          | Details                                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **True P2P**                     | Media flows directly viewer↔broadcaster over WebRTC. Only the brief signaling handshake uses a server. |
-| **Find by @username**            | Viewers type `@alice` — the server maps username → current live peer ID.                               |
-| **In-browser broadcaster**       | `getDisplayMedia` → PeerJS host, no extension required. Screen, window, or tab.                        |
-| **Access control**               | Public, members-only (signed-in), or code-gated broadcasts. Two-gate enforcement.                      |
-| **Admin/moderation**             | Ban users (evicted at signaling), broadcast takedown, report queue, role management.                   |
-| **Invite codes**                 | `invite` registration mode; admins mint codes with optional max-uses and expiry.                       |
-| **Email verification**           | Soft (banner) or hard (blocks login). Resend from dashboard.                                           |
-| **Password reset**               | Forgot-password flow via email link (1-hour single-use token).                                         |
-| **Live stats**                   | Viewers, bitrate, FPS, resolution — updated every 2 s on the broadcaster page.                         |
-| **Viewer auto-reconnect**        | Drops and comes back up; last frame stays on screen while redialling.                                  |
-| **Toast notifications**          | All user feedback via a global dismissible toast tray.                                                 |
-| **Installable PWA**              | Service-worker shell for offline launch; Add to Home Screen.                                           |
-| **Docker-ready**                 | Multi-stage image, single container, persistent SQLite volume.                                         |
-| **Self-hosted PeerJS signaling** | No cloud dependency; your `/peerjs` broker handles all handshakes.                                     |
-| **TURN relay**                   | Bundled `coturn` via `--profile turn` for symmetric-NAT viewers.                                       |
+| Feature                          | Details                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **True P2P**                     | Media flows directly viewer↔broadcaster over WebRTC. Only the brief signaling handshake uses a server.  |
+| **Find by @username**            | Viewers type `@alice` — the server maps username → current live peer ID.                                |
+| **In-browser broadcaster**       | `getDisplayMedia` on desktop or `getUserMedia` on mobile → PeerJS host; screen, window, tab, or camera. |
+| **Access control**               | Public, members-only (signed-in), or code-gated broadcasts. Two-gate enforcement.                       |
+| **Admin/moderation**             | Ban users (evicted at signaling), broadcast takedown, report queue, role management.                    |
+| **Invite codes**                 | `invite` registration mode; admins mint codes with optional max-uses and expiry.                        |
+| **Email verification**           | Soft (banner) or hard (blocks login). Resend from dashboard.                                            |
+| **Password reset**               | Forgot-password flow via email link (1-hour single-use token).                                          |
+| **Live stats**                   | Viewers, bitrate, FPS, resolution — updated every 2 s on the broadcaster page.                          |
+| **Viewer auto-reconnect**        | Drops and comes back up; last frame stays on screen while redialling.                                   |
+| **Toast notifications**          | All user feedback via a global dismissible toast tray.                                                  |
+| **Installable PWA**              | Service-worker shell for offline launch; Add to Home Screen.                                            |
+| **Docker-ready**                 | Multi-stage image, single container, persistent SQLite volume.                                          |
+| **Self-hosted PeerJS signaling** | No cloud dependency; your `/peerjs` broker handles all handshakes.                                      |
+| **TURN relay**                   | Bundled `coturn` via `--profile turn` for symmetric-NAT viewers.                                        |
 
 ---
 
