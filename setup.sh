@@ -25,7 +25,7 @@ err()   { printf "${RED}[error]${NC} %s\n" "$*" >&2; exit 1; }
 
 # ── Locate or clone the repo ──────────────────────────────────────────────
 REPO_URL="https://github.com/luciVuc/peer-cast.git"
-REPO_REF="9ed4ebde104dc5311c5c312f8c20f9f3960654bd"
+REPO_REF="72b4f7a2f986c7ff155ce1ed2333ae7f040174cf"
 
 # If we're already inside a peer-cast repo, use it.
 if [ -f "packages/server/package.json" ] 2>/dev/null; then

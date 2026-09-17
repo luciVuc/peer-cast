@@ -38,7 +38,7 @@ fi
 
 # ── Usage / preflight ──────────────────────────────────────────────────────
 REPO_URL="https://github.com/luciVuc/peer-cast.git"
-REPO_REF="9ed4ebde104dc5311c5c312f8c20f9f3960654bd"
+REPO_REF="72b4f7a2f986c7ff155ce1ed2333ae7f040174cf"
 INSTALL_DIR="${RUN_HOME}/peer-cast"
 
 command -v openssl >/dev/null 2>&1 || err "openssl is required. Install: ${SUDO} apt install openssl"
