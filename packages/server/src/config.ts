@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,6 +82,29 @@ function resolveWebDir(): string | null {
   return null;
 }
 
+/** Resolve the repo-root package.json version (the version SSOT). Falls back
+ * to a legacy constant for bare server-only installs where the root manifest
+ * is unreachable. The APP_VERSION env var always wins when set. */
+function packageVersion(): string {
+  const candidates = [
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../package.json"),
+    resolve(process.cwd(), "package.json"),
+    resolve(process.cwd(), "../../package.json"),
+  ];
+  for (const c of candidates) {
+    try {
+      if (!existsSync(c)) continue;
+      const pkg = JSON.parse(readFileSync(c, "utf8")) as {
+        version?: string;
+      };
+      if (pkg.version) return pkg.version;
+    } catch {
+      // unreadable JSON — try the next candidate
+    }
+  }
+  return "2.0.0";
+}
+
 export const config = {
   port: PORT,
   host: str("HOST", "0.0.0.0"),
@@ -110,7 +133,7 @@ export const config = {
 
   webDir: resolveWebDir(),
   appName: str("APP_NAME", "PeerCast"),
-  version: str("APP_VERSION", "2.0.0"),
+  version: str("APP_VERSION", packageVersion()),
 
   /** URL clients use to reach the app (for email links). No trailing slash. */
   appUrl: str("APP_URL", `http://localhost:${PORT}`),
