@@ -152,6 +152,9 @@ SQLite data directory.
 
 The PWA downloads the new service worker and hashed assets automatically, but a
 page that is already open continues running its previous JavaScript bundle.
+The footer displays the deployed app version; click it to check `/api/config`
+for a newer release and confirm a local PWA update. Broadcasters should still
+end an active broadcast before reloading.
 After a deployment, viewers should refresh or reopen the page before testing
 the change. A broadcaster must stop the current broadcast, close or fully
 reload the PWA, and start a new broadcast so the host uses the new bundle.

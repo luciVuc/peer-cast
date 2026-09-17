@@ -264,8 +264,11 @@ Key implementation points:
 
 Hashed assets plus `Cache-Control: no-cache` for `index.html` and `sw.js`
 allow automatic downloads. An already-running page continues executing its
-old bundle. Broadcasters must end/reload before starting a new session after a
-deployment; an active broadcast should not be force-reloaded.
+old bundle. The footer reads the deployed version from `/api/config`; clicking
+it checks for a newer server version, asks for confirmation, updates the
+service worker, and reloads the page. Broadcasters must end/reload before
+starting a new session after a deployment; an active broadcast should not be
+force-reloaded.
 
 ## 9. Extension graph
 

@@ -287,6 +287,7 @@
     "Media and chat flow peer-to-peer; the server only handles rendezvous/signaling.",
     "Mobile capture uses getUserMedia: camera + microphone, camera-only, or microphone-only.",
     "Live mobile lens switching replaces outgoing WebRTC video tracks before stopping the old track.",
+    "The footer version comes from /api/config; clicking it checks for a newer version and confirms PWA reload.",
     "Production requires a strong JWT_SECRET and HTTPS for browser capture/WebRTC.",
     "SQLite and recording files must live on persistent storage.",
     "PWA pages already running do not replace their active JavaScript bundle until reload."

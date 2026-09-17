@@ -10,7 +10,7 @@ import { useAppDispatch, useAppSelector } from "../store";
 import { loggedOut } from "../store/authSlice";
 import { broadcastStopped } from "../store/broadcastSlice";
 import { broadcastService } from "../lib/broadcastService";
-import { useEndBroadcastMutation } from "../store/api";
+import { useEndBroadcastMutation, useGetConfigQuery } from "../store/api";
 import { Avatar } from "./Avatar";
 
 function DrawerLink({
@@ -56,6 +56,7 @@ export function Layout() {
   const broadcastStatus = useAppSelector((s) => s.broadcast.status);
   const activeBroadcast = useAppSelector((s) => s.broadcast.active);
   const [endBroadcast] = useEndBroadcastMutation();
+  const { data: appConfig } = useGetConfigQuery();
   const isLive = broadcastStatus === "live" || broadcastStatus === "starting";
   const dispatch = useAppDispatch();
   const location = useLocation();
@@ -64,6 +65,7 @@ export function Layout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [drawerQ, setDrawerQ] = useState("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   // Close drawer on route change
   useEffect(() => {
@@ -112,11 +114,52 @@ export function Layout() {
           /* best-effort */
         });
     }
+
     broadcastService.cleanup();
     dispatch(broadcastStopped());
     dispatch(loggedOut());
     setDrawerOpen(false);
     navigate("/");
+  }
+
+  async function checkForUpdate() {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const response = await fetch(`/api/config?check=${Date.now()}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("version check failed");
+      const latest = (await response.json()) as { version?: string };
+      const currentVersion = appConfig?.version;
+      if (
+        !latest.version ||
+        !currentVersion ||
+        latest.version === currentVersion
+      ) {
+        await navigator.serviceWorker
+          ?.getRegistration()
+          ?.then((registration) => registration?.update());
+        window.alert(
+          `PeerCast ${currentVersion ?? latest.version ?? ""} is up to date.`,
+        );
+        return;
+      }
+
+      const shouldUpdate = window.confirm(
+        `PeerCast ${latest.version} is available (you have ${currentVersion}). Update now?`,
+      );
+      if (!shouldUpdate) return;
+
+      await navigator.serviceWorker
+        ?.getRegistration()
+        ?.then((registration) => registration?.update());
+      window.location.reload();
+    } catch {
+      window.alert("Unable to check for updates right now.");
+    } finally {
+      setCheckingUpdate(false);
+    }
   }
 
   return (
@@ -325,7 +368,18 @@ export function Layout() {
       </main>
 
       <footer className="border-t border-white/5 py-6 text-center text-xs text-slate-500">
-        PeerCast · peer-to-peer broadcasting · self-hosted
+        PeerCast · peer-to-peer broadcasting ·{" "}
+        <button
+          type="button"
+          className="underline decoration-dotted underline-offset-2 transition hover:text-slate-300 disabled:cursor-wait"
+          onClick={() => void checkForUpdate()}
+          disabled={checkingUpdate}
+          title="Check for a newer PeerCast version"
+        >
+          {checkingUpdate
+            ? "checking for updates…"
+            : `v${appConfig?.version ?? "…"}`}
+        </button>
       </footer>
     </div>
   );
