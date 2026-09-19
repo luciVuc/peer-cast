@@ -1,0 +1,2755 @@
+openapi: 3.1.1
+info:
+  title: PeerCast API
+  version: 1.1.4
+  description: |
+    Self-hosted, WebRTC peer-to-peer live broadcast platform. Everything runs on
+    Node.js: REST API, PeerJS signaling, SQLite storage, and the installable
+    React PWA — served from one process.
+
+    All paths below are mounted under the `/api` base path. Request and response
+    bodies are JSON (`Content-Type: application/json`) except the recording chunk
+    upload (`PUT /api/recordings/:id/chunk`), which is raw `application/octet-stream`.
+
+    Timestamps are Unix epoch **milliseconds**. Broadcast/report IDs are nanoid
+    strings; recording IDs are 18-char hex strings.
+
+    ## Authentication
+
+    - `Authorization: Bearer <accessToken>` on authenticated endpoints.
+    - The **refresh token** travels only as an HttpOnly cookie (`rt`, `Path=/api/auth`).
+    - `POST /api/auth/refresh` rotates the refresh token and returns a new access token.
+    - A short-lived opaque signaling ticket (`POST /api/auth/signaling-ticket`) replaces
+      the JWT in the PeerJS WebSocket URL (`?token=`).
+
+    ## Error envelope
+
+    Every error is a JSON object: `{ "error": string, "code"?: string }`.
+    Common machine-readable codes: `USERNAME_TAKEN`, `EMAIL_TAKEN`,
+    `REGISTRATION_CLOSED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `BAD_CREDENTIALS`,
+    `BANNED`, `EMAIL_UNVERIFIED`, `BAD_PASSWORD`, `EMAIL_SAME`, `TOKEN_INVALID`,
+    `ADMIN_ONLY`, `PUSH_ENDPOINT`, `PAYLOAD_TOO_LARGE`, `RECORDING_TOO_LARGE`,
+    `RECORDING_QUOTA_EXCEEDED`, `VALIDATION`, `BAD_JSON`, `RATE_LIMITED`.
+    See the `Error` schema and the shared `Error*` responses.
+
+    ## WebRTC signaling
+
+    PeerJS signaling is self-hosted at `/peerjs` (key `peercast`). The exact
+    connection parameters are delivered via `GET /api/config` → `signal`.
+    WebSocket upgrades carry `?token=<signaling ticket>`. Banned accounts are
+    rejected at the upgrade before `OPEN`; anonymous peers are allowed.
+servers:
+  - url: /api
+    description: Relative to the deployed PeerCast origin (Express, Docker, or Vite dev host).
+tags:
+  - name: Health
+    description: Liveness probe.
+  - name: Config
+    description: Public runtime configuration (signal + ICE, registration mode).
+  - name: Auth
+    description: Registration, login, refresh, logout, signaling tickets.
+  - name: Email
+    description: Email verification, email change, forgot/reset password.
+  - name: Users
+    description: Profile, settings, search, public profiles, follows.
+  - name: Broadcasts
+    description: Live listing, start/end, stats heartbeat, history.
+  - name: Sessions
+    description: Viewer resolution (two-gate access) + ticket verification.
+  - name: Reports
+    description: File abuse reports.
+  - name: Admin
+    description: Moderation, users, metrics, reports, invites. Admin role required.
+  - name: Push
+    description: Web Push (VAPID) subscription management.
+  - name: Recordings
+    description: Per-broadcast WebM recording upload/replay.
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: health
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+
+  /config:
+    get:
+      tags: [Config]
+      summary: Public runtime configuration
+      description: |
+        Delivers signaling parameters so clients never hardcode the PeerJS
+        broker, plus registration mode and feature flags. TURN entries carry
+        time-scoped ephemeral credentials when `TURN_SHARED_SECRET` is set.
+      operationId: getConfig
+      responses:
+        "200":
+          description: Runtime config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConfig"
+
+  # ─── Auth ───────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      description: |
+        Rate-limited (5/h per IP). When registration mode is `invite`, an
+        `inviteCode` is required. A configured admin handle may pair with the
+        operator secret via the `adminBootstrapSecret` body field or the
+        `X-Admin-Bootstrap-Secret` header. Sets the `rt` refresh cookie.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Account created.
+          headers:
+            Set-Cookie:
+              description: HttpOnly refresh-token cookie `rt`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          description: |
+            `REGISTRATION_CLOSED`, `INVITE_REQUIRED`, or `INVITE_INVALID` —
+            registration gated by the configured mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`USERNAME_TAKEN` or `EMAIL_TAKEN`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: |
+        Rate-limited (10/15 min per IP, 10/15 min per username on failed login
+        attempts). Sets the `rt` refresh cookie.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: HttpOnly refresh-token cookie `rt`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: "`BAD_CREDENTIALS`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "`BANNED` or `EMAIL_UNVERIFIED` (when email verification is required)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      description: |
+        Reads and rotates the HttpOnly `rt` cookie (no request body).
+        Rate-limited (30/15 min per IP).
+      operationId: refresh
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: New access token issued; refresh cookie rotated.
+          headers:
+            Set-Cookie:
+              description: Rotated HttpOnly refresh-token cookie `rt`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+        "401":
+          description: Missing or invalid refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "`BANNED`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out (current session)
+      description: Consumes the refresh cookie if present and clears it.
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Sign out of every session
+      description: Revokes all of the caller's refresh tokens and clears the cookie.
+      operationId: logoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /auth/signaling-ticket:
+    post:
+      tags: [Auth]
+      summary: Mint a signaling ticket
+      description: |
+        Returns a short-lived (2 min), single-use opaque token for the PeerJS
+        WebSocket `?token=` param — never pass the raw JWT into signaling URLs.
+      operationId: signalingTicket
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Opaque signaling ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token:
+                    type: string
+                    description: Short-lived, single-use WebSocket auth ticket.
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  # ─── Email ───────────────────────────────────────────────────────────────
+  /auth/send-verification:
+    post:
+      tags: [Email]
+      summary: Send (or resend) the verification email
+      description: |
+        Fire-and-forget; always `{ok:true}` unless unauthenticated. Silent for
+        missing accounts. Rate-limited (5/h per IP).
+      operationId: sendVerification
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Email queued (or account already verified).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  alreadyVerified:
+                    type: boolean
+                    description: True when the account was already verified.
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/verify-email:
+    get:
+      tags: [Email]
+      summary: Verify an email address from a link
+      description: |
+        Consumes the single-use 24 h token and 302-redirects to the web app.
+        Invalid/expired tokens redirect with `?status=invalid`. Rate-limited
+        (30/h per IP).
+      operationId: verifyEmail
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: Email verification token from the confirmation link.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: |
+            Redirects to `${appUrl}/verify-email?status=ok` on success or
+            `?status=invalid` otherwise.
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          description: Missing `token` parameter.
+
+  /auth/change-email:
+    post:
+      tags: [Email]
+      summary: Request an email change (verified, two-step)
+      description: |
+        Re-authenticates with the current password, then emails a confirmation
+        link to the new address. The new email is NOT applied until the link is
+        clicked. Rate-limited (5/h per IP, 3/h per target address).
+      operationId: changeEmail
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeEmailRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "400":
+          description: "Validation, `BAD_PASSWORD`, or `EMAIL_SAME`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "409":
+          description: "`EMAIL_TAKEN`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/verify-email-change:
+    get:
+      tags: [Email]
+      summary: Confirm an email change from a link
+      description: |
+        Consumes the token, applies the new address (revoking all sessions),
+        and 302-redirects. Invalid → `?status=invalid`; address re-claimed →
+        `?status=taken`; success → `?status=ok`.
+      operationId: verifyEmailChange
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: Email-change confirmation token.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to `${appUrl}/verify-email-change?status=…`.
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          description: Missing `token` parameter.
+
+  /auth/forgot-password:
+    post:
+      tags: [Email]
+      summary: Send a password-reset email
+      description: |
+        Always returns 200 (no account enumeration). Sends a reset link when the
+        address exists. Rate-limited (5/h per IP, 3/h per address).
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /auth/reset-password:
+    post:
+      tags: [Email]
+      summary: Consume a reset token and set a new password
+      description: |
+        Token is single-use with a 1 h TTL; the row is deleted on any consume
+        attempt, so replay always fails. Revokes all refresh tokens.
+        Rate-limited (10/h per IP).
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "400":
+          description: "`TOKEN_INVALID` or validation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  # ─── Users ───────────────────────────────────────────────────────────────
+  /users/search:
+    get:
+      tags: [Users]
+      summary: Search discoverable users and live broadcasts
+      description: |
+        Searches users and live broadcasts (discoverable, non-banned accounts
+        only). `peerId` is never present.
+      operationId: searchUsers
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search text. Empty returns empty arrays.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching users and live broadcasts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Current user profile + settings
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Own profile and stored settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfProfileResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    put:
+      tags: [Users]
+      summary: Update current user profile
+      description: |
+        `avatarDataUrl` must be a raster `data:image/(png|jpe?g|webp|gif);base64,…`
+        data URL of at most 200 KB.
+      operationId: updateMe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: "#/components/schemas/SelfUser"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      tags: [Users]
+      summary: Delete own account (right to erasure)
+      description: |
+        Requires the current password. Ends live broadcasts, revokes sessions,
+        deletes recordings and the account.
+      operationId: deleteMe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAccountRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "401":
+          description: "`BAD_PASSWORD`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/me/settings:
+    put:
+      tags: [Users]
+      summary: Update current user settings
+      operationId: updateSettings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSettingsRequest"
+      responses:
+        "200":
+          description: Updated settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [settings]
+                properties:
+                  settings:
+                    $ref: "#/components/schemas/UserSettings"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /users/me/password:
+    put:
+      tags: [Users]
+      summary: Change current user password
+      description: Revokes all refresh tokens on success.
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "401":
+          description: "`BAD_PASSWORD`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/{username}:
+    get:
+      tags: [Users]
+      summary: Public profile by @username (+ current live broadcast)
+      description: |
+        Auth is optional. The live broadcast's `peerId` is always null; real
+        resolution happens via `/sessions/{username}`.
+      operationId: getPublicProfile
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: Public profile (and live broadcast, if any).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/{username}/following:
+    get:
+      tags: [Users]
+      summary: Check whether the caller follows this user
+      operationId: isFollowing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: Follow state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowingResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/{username}/follow:
+    post:
+      tags: [Users]
+      summary: Follow a user
+      description: Idempotent. Rate-limited (60/15 min per IP).
+      operationId: follow
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: Now following.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, following]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  following:
+                    type: boolean
+                    const: true
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "429":
+          $ref: "#/components/responses/Error429"
+    delete:
+      tags: [Users]
+      summary: Unfollow a user
+      description: Idempotent.
+      operationId: unfollow
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: No longer following.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, following]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  following:
+                    type: boolean
+                    const: false
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  # ─── Broadcasts ──────────────────────────────────────────────────────────
+  /broadcasts/live:
+    get:
+      tags: [Broadcasts]
+      summary: Currently live broadcasts (landing feed)
+      description: |
+        Discoverable, non-banned owners only, newest first (limit 60).
+        `peerId` is always null; `stats` present only while live with a recent
+        heartbeat.
+      operationId: listLiveBroadcasts
+      responses:
+        "200":
+          description: Live broadcasts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBroadcastsResponse"
+
+  /broadcasts/mine:
+    get:
+      tags: [Broadcasts]
+      summary: Current user's broadcast history
+      description: Newest first, limit 100. Ended rows have no `stats`.
+      operationId: myBroadcasts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Own broadcast history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBroadcastsResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /broadcasts:
+    post:
+      tags: [Broadcasts]
+      summary: Start a broadcast
+      description: |
+        The host picks a fresh random `peerId` and answers PeerJS calls on it.
+        `accessCode` is required when `access` is `code` and is stored only as a
+        SHA-256 digest. Starting ends any prior live broadcast for this user;
+        public broadcasts notify opted-in followers (fire-and-forget).
+      operationId: startBroadcast
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartBroadcastRequest"
+      responses:
+        "201":
+          description: Broadcast started. `peerId` is nulled in this payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartBroadcastResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /broadcasts/{id}/stats:
+    post:
+      tags: [Broadcasts]
+      summary: Push live stats heartbeat (owner)
+      description: |
+        Updates the live stats snapshot plus peak/total aggregation
+        (monotonic). Owner-only.
+      operationId: updateBroadcastStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BroadcastIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStatsRequest"
+      responses:
+        "200":
+          description: Updated broadcast with fresh stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [broadcast]
+                properties:
+                  broadcast:
+                    $ref: "#/components/schemas/BroadcastWithUser"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          description: Not the owner, not live, or unknown id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /broadcasts/{id}/end:
+    post:
+      tags: [Broadcasts]
+      summary: End a live broadcast (owner)
+      operationId: endBroadcast
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BroadcastIdPath"
+      responses:
+        "200":
+          description: Broadcast ended (stats cleared, peerId nulled).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [broadcast]
+                properties:
+                  broadcast:
+                    $ref: "#/components/schemas/Broadcast"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`not your broadcast`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /broadcasts/{id}:
+    get:
+      tags: [Broadcasts]
+      summary: Broadcast detail
+      description: "`peerId` is always null here; live resolution happens via `/sessions`."
+      operationId: getBroadcast
+      parameters:
+        - $ref: "#/components/parameters/BroadcastIdPath"
+      responses:
+        "200":
+          description: Broadcast with owner (peerId nulled).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [broadcast]
+                properties:
+                  broadcast:
+                    $ref: "#/components/schemas/BroadcastWithUser"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  # ─── Sessions ────────────────────────────────────────────────────────────
+  /sessions/{username}:
+    get:
+      tags: [Sessions]
+      summary: Resolve a broadcaster's live session (two-gate access)
+      description: |
+        Auth is optional. Access gates:
+
+        - `public` → `peerId` revealed, no ticket.
+        - `authenticated` → anon gets 401; authed gets `peerId` + ticket.
+        - `code` → missing `?code=` gives 401, wrong code gives 403 (both with
+          `needsCode: true`); a correct code yields `peerId` + ticket (bound to
+          the authed username if any).
+
+        The host separately verifies the ticket via `/sessions/verify-ticket`.
+        404 when the broadcaster is not live, banned, or the session is stale.
+      operationId: resolveSession
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+        - name: code
+          in: query
+          required: false
+          description: Access code for `code`-gated broadcasts.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorised resolve with peerId (+ ticket when non-public).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveResponse"
+        "401":
+          description: |
+            Code-gated broadcast without a code, or `authenticated` broadcast
+            for an anonymous viewer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveResponse"
+        "403":
+          description: "Wrong access code (with `needsCode: true`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveResponse"
+        "404":
+          description: "`no live broadcast`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /sessions/verify-ticket:
+    post:
+      tags: [Sessions]
+      summary: Verify a viewer ticket (host-side gate)
+      description: |
+        Called by the broadcaster host on each incoming PeerJS call for
+        non-public broadcasts. Checks the ticket matches the peerId and is
+        unexpired (5 min TTL; not single-use).
+      operationId: verifyTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyTicketRequest"
+      responses:
+        "200":
+          description: Verification result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyTicketResponse"
+
+  # ─── Reports ─────────────────────────────────────────────────────────────
+  /reports:
+    post:
+      tags: [Reports]
+      summary: File an abuse report
+      description: |
+        Auth optional; the reporter handle is recorded when signed in.
+        Rate-limited (10/h per IP).
+      operationId: createReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "201":
+          description: Report created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, report]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  report:
+                    $ref: "#/components/schemas/Report"
+        "400":
+          description: Validation failure or reporting yourself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  # ─── Admin ───────────────────────────────────────────────────────────────
+  # NOTE: every /admin path requires an authenticated admin (bearerAuth).
+  # Non-admins get 403 `ADMIN_ONLY`; anonymous callers get 401.
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List users (admin)
+      description: Newest first, limit 100. Optional filter across username/display name/email. Includes banned.
+      operationId: adminListUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Text filter.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Admin users.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUsersResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/users/{username}:
+    get:
+      tags: [Admin]
+      summary: Get one user (admin)
+      operationId: adminGetUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: Admin user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      tags: [Admin]
+      summary: Hard-delete a user (admin)
+      description: |
+        Ends live broadcasts, revokes sessions, deletes recordings + account.
+        Self-deletion is blocked (use `DELETE /users/me`).
+      operationId: adminDeleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/users/{username}/ban:
+    post:
+      tags: [Admin]
+      summary: Ban a user (admin)
+      description: |
+        Revokes refresh tokens and force-ends all live broadcasts.
+        Cannot ban yourself or another admin.
+      operationId: banUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BanUserRequest"
+      responses:
+        "200":
+          description: User banned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user, endedLive]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  user:
+                    $ref: "#/components/schemas/AdminUser"
+                  endedLive:
+                    type: integer
+                    description: Number of broadcasts force-ended.
+                example:
+                  ok: true
+                  endedLive: 1
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY` or `cannot ban another admin`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/users/{username}/unban:
+    post:
+      tags: [Admin]
+      summary: Unban a user (admin)
+      operationId: unbanUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      responses:
+        "200":
+          description: User unbanned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  user:
+                    $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/users/{username}/role:
+    put:
+      tags: [Admin]
+      summary: Set a user's role (admin)
+      description: Cannot change your own role.
+      operationId: setUserRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UsernamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetRoleRequest"
+      responses:
+        "200":
+          description: Role updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  user:
+                    $ref: "#/components/schemas/AdminUser"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/broadcasts/{id}/takedown:
+    post:
+      tags: [Admin]
+      summary: Force-end any broadcast (admin takedown)
+      operationId: broadcastTakedown
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BroadcastIdPath"
+      responses:
+        "200":
+          description: Broadcast ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, broadcast]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  broadcast:
+                    $ref: "#/components/schemas/Broadcast"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/metrics:
+    get:
+      tags: [Admin]
+      summary: Aggregate + daily metrics (admin)
+      description: "`days` is clamped to the range 7–90 (default 30)."
+      operationId: adminMetrics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Number of days of time-series. Clamped to [7, 90]; non-numeric defaults to 30.
+          schema:
+            type: integer
+            minimum: 7
+            maximum: 90
+            default: 30
+      responses:
+        "200":
+          description: Metrics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminMetricsResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/reports:
+    get:
+      tags: [Admin]
+      summary: List reports (admin)
+      description: Newest first, limit 200. Invalid `status` falls back to `open`.
+      operationId: adminListReports
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Report status filter.
+          schema:
+            type: string
+            enum: [open, resolved, dismissed, all]
+            default: open
+      responses:
+        "200":
+          description: Reports + open count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports, openCount]
+                properties:
+                  reports:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Report"
+                  openCount:
+                    type: integer
+                    description: Number of currently open reports.
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/reports/{id}/resolve:
+    post:
+      tags: [Admin]
+      summary: Resolve or dismiss a report (admin)
+      operationId: resolveReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Report id (nanoid).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveReportRequest"
+      responses:
+        "200":
+          description: Report updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, report]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  report:
+                    $ref: "#/components/schemas/Report"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /admin/invites:
+    get:
+      tags: [Admin]
+      summary: List invite codes (admin)
+      description: Newest first, limit 200.
+      operationId: adminListInvites
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Invite codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminInvitesResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [Admin]
+      summary: Create an invite code (admin)
+      description: |
+        Codes are 10 chars from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`
+        (no 0/O/1/I/l).
+      operationId: adminCreateInvite
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInviteRequest"
+      responses:
+        "201":
+          description: Invite created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, invite]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  invite:
+                    $ref: "#/components/schemas/Invite"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/invites/{code}/disable:
+    post:
+      tags: [Admin]
+      summary: Disable an invite code (admin)
+      operationId: adminDisableInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Invite code to disable.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invite disabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, invite]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  invite:
+                    $ref: "#/components/schemas/Invite"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          description: "`ADMIN_ONLY`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  # ─── Push ────────────────────────────────────────────────────────────────
+  /push/vapid-key:
+    get:
+      tags: [Push]
+      summary: Public VAPID key (for pushManager.subscribe)
+      description: Returns 404 when push notifications are disabled on this server.
+      operationId: getVapidKey
+      responses:
+        "200":
+          description: Public VAPID key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushVapidKeyResponse"
+        "404":
+          description: Push notifications are disabled.
+
+  /push/subscribe:
+    post:
+      tags: [Push]
+      summary: Subscribe to push notifications
+      description: |
+        Endpoint host must be a known push service. Upserts the subscription.
+        Rate-limited (5/h per IP).
+      operationId: pushSubscribe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscribeRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "400":
+          description: "Push disabled, `PUSH_ENDPOINT`, or validation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "429":
+          $ref: "#/components/responses/Error429"
+    delete:
+      tags: [Push]
+      summary: Unsubscribe from push notifications
+      description: The endpoint record is removed only if owned by the caller.
+      operationId: pushUnsubscribe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushUnsubscribeRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  # ─── Recordings ──────────────────────────────────────────────────────────
+  # NOTE: every /recordings path requires auth and is scoped to the caller's
+  # own recordings (owner-only reads/writes/replay/delete).
+  /recordings:
+    get:
+      tags: [Recordings]
+      summary: My recordings
+      description: Newest first.
+      operationId: listRecordings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Own recordings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingListResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    post:
+      tags: [Recordings]
+      summary: Start a recording
+      description: |
+        Creates the recording row (status `recording`, `sizeBytes`/`durationMs`
+        zero). `broadcastId`, when given, must belong to the caller.
+        Rate-limited (20/h per IP).
+      operationId: createRecording
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRecordingRequest"
+      responses:
+        "201":
+          description: Recording created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /recordings/{id}/chunk:
+    put:
+      tags: [Recordings]
+      summary: Append a raw media chunk
+      description: |
+        Body is raw `application/octet-stream` (WebM data), up to 25 MB per
+        chunk. Rate-limited (600/15 min per IP).
+      operationId: appendRecordingChunk
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RecordingIdPath"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Chunk appended (running total size).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppendChunkResponse"
+        "400":
+          description: |
+            Already finalised, `RECORDING_TOO_LARGE`, or
+            `RECORDING_QUOTA_EXCEEDED`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "413":
+          description: "`PAYLOAD_TOO_LARGE` — chunk exceeds 25 MB."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /recordings/{id}/finalize:
+    post:
+      tags: [Recordings]
+      summary: Finalize a recording
+      description: |
+        Renames `.webm.part` → `.webm` (or creates an empty file) and marks the
+        recording `complete`.
+      operationId: finalizeRecording
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RecordingIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinalizeRecordingRequest"
+      responses:
+        "200":
+          description: Finalized recording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /recordings/{id}:
+    get:
+      tags: [Recordings]
+      summary: Recording metadata
+      operationId: getRecording
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RecordingIdPath"
+      responses:
+        "200":
+          description: Recording metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      tags: [Recordings]
+      summary: Delete a recording (row + files)
+      operationId: deleteRecording
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RecordingIdPath"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResponse"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /recordings/{id}/data:
+    get:
+      tags: [Recordings]
+      summary: Stream the recording file (owner)
+      description: |
+        Serves the WebM via `sendFile`, `Content-Type: video/webm`, with HTTP
+        Range support (206 partial content) for seeking.
+      operationId: getRecordingData
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RecordingIdPath"
+      responses:
+        "200":
+          description: Full WebM file.
+          content:
+            video/webm:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content (Range request).
+          content:
+            video/webm:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          description: Recording row or file not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token returned by register/login/refresh.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: rt
+      description: HttpOnly, SameSite refresh-token cookie (Path=/api/auth).
+
+  parameters:
+    UsernamePath:
+      name: username
+      in: path
+      required: true
+      description: Account handle (case-insensitive; matched by lowercased canonical key).
+      schema:
+        type: string
+        example: alice
+    BroadcastIdPath:
+      name: id
+      in: path
+      required: true
+      description: Broadcast id (nanoid).
+      schema:
+        type: string
+    RecordingIdPath:
+      name: id
+      in: path
+      required: true
+      description: Recording id (18-char hex).
+      schema:
+        type: string
+
+  responses:
+    OkResponse:
+      description: Success.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok:
+                type: boolean
+                const: true
+    Error400:
+      description: |
+        Bad request. Codes include `VALIDATION` (zod), `BAD_JSON` (malformed
+        body), `BAD_PASSWORD`, `EMAIL_SAME`, `PUSH_ENDPOINT`, `TOKEN_INVALID`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error401:
+      description: "Unauthenticated: missing/invalid bearer token, or `BAD_CREDENTIALS` on login."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error403:
+      description: |
+        Forbidden: `BANNED` (suspended account, checked live per request) or
+        `ADMIN_ONLY` / `REGISTRATION_CLOSED` / `INVITE_*` gates.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error404:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error429:
+      description: "`RATE_LIMITED` — too many requests (per-IP limits)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # ─── Domain models ─────────────────────────────────────────────────────
+    AccessPolicy:
+      type: string
+      enum: [public, authenticated, code]
+      description: Who is allowed to watch a broadcast.
+    UserRole:
+      type: string
+      enum: [user, admin]
+    RegistrationMode:
+      type: string
+      enum: [open, invite, closed]
+    BroadcastStatus:
+      type: string
+      enum: [live, ended]
+    CaptureSource:
+      type: string
+      enum: [tab, screen, window, camera, camera-only, microphone]
+    ReportStatus:
+      type: string
+      enum: [open, resolved, dismissed]
+
+    Error:
+      type: object
+      description: Standard error envelope returned by the error handler.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable message.
+        code:
+          type: string
+          description: |
+            Optional machine-readable code, e.g. `USERNAME_TAKEN`, `BANNED`,
+            `VALIDATION`, `RATE_LIMITED`.
+      example:
+        error: unauthorized
+        code: BAD_CREDENTIALS
+
+    PublicUser:
+      type: object
+      description: Public-safe view of a user (never includes secrets).
+      required: [username, displayName, about, avatarUrl, createdAt]
+      properties:
+        username:
+          type: string
+          description: Canonical display-case handle.
+        displayName:
+          type: string
+        about:
+          type: [string, "null"]
+        avatarUrl:
+          type: [string, "null"]
+        createdAt:
+          type: integer
+          format: int64
+          description: Epoch milliseconds.
+      example:
+        username: alice
+        displayName: Alice
+        about: Streaming my desk.
+        avatarUrl: /avatars/alice.webp
+        createdAt: 1720000000000
+
+    SelfUser:
+      allOf:
+        - $ref: "#/components/schemas/PublicUser"
+        - type: object
+          description: The authenticated user's own account view.
+          required: [email, role, emailVerified, updatedAt]
+          properties:
+            email:
+              type: string
+              format: email
+            role:
+              $ref: "#/components/schemas/UserRole"
+            emailVerified:
+              type: boolean
+            updatedAt:
+              type: integer
+              format: int64
+
+    AdminUser:
+      allOf:
+        - $ref: "#/components/schemas/PublicUser"
+        - type: object
+          description: Admin-only view of an account (adds moderation fields).
+          required:
+            [email, role, discoverable, banned, bannedReason, bannedAt, live]
+          properties:
+            email:
+              type: string
+              format: email
+            role:
+              $ref: "#/components/schemas/UserRole"
+            discoverable:
+              type: boolean
+            banned:
+              type: boolean
+            bannedReason:
+              type: [string, "null"]
+            bannedAt:
+              type: [integer, "null"]
+              format: int64
+            live:
+              type: boolean
+
+    Invite:
+      type: object
+      required:
+        [code, note, maxUses, uses, expiresAt, createdBy, createdAt, disabled]
+      properties:
+        code:
+          type: string
+        note:
+          type: [string, "null"]
+        maxUses:
+          type: [integer, "null"]
+          description: null = unlimited.
+        uses:
+          type: integer
+        expiresAt:
+          type: [integer, "null"]
+          format: int64
+          description: null = never.
+        createdBy:
+          type: [string, "null"]
+        createdAt:
+          type: integer
+          format: int64
+        disabled:
+          type: boolean
+
+    Report:
+      type: object
+      required:
+        [
+          id,
+          targetUsername,
+          broadcastId,
+          reporterUsername,
+          reason,
+          status,
+          createdAt,
+          resolvedAt,
+          resolvedBy,
+        ]
+      properties:
+        id:
+          type: string
+        targetUsername:
+          type: string
+        broadcastId:
+          type: [string, "null"]
+        reporterUsername:
+          type: [string, "null"]
+        reason:
+          type: string
+        status:
+          $ref: "#/components/schemas/ReportStatus"
+        createdAt:
+          type: integer
+          format: int64
+        resolvedAt:
+          type: [integer, "null"]
+          format: int64
+        resolvedBy:
+          type: [string, "null"]
+
+    Broadcast:
+      type: object
+      required:
+        [
+          id,
+          username,
+          title,
+          description,
+          status,
+          access,
+          source,
+          peerId,
+          startedAt,
+          endedAt,
+          peakViewers,
+          totalViews,
+        ]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          description: Owner handle (display case).
+        title:
+          type: string
+        description:
+          type: [string, "null"]
+        status:
+          $ref: "#/components/schemas/BroadcastStatus"
+        access:
+          $ref: "#/components/schemas/AccessPolicy"
+        source:
+          $ref: "#/components/schemas/CaptureSource"
+        peerId:
+          type: [string, "null"]
+          description: |
+            PeerJS peer id of the host. A secret for non-public broadcasts: only
+            ever revealed by `GET /sessions/{username}` after access checks.
+        startedAt:
+          type: integer
+          format: int64
+        endedAt:
+          type: [integer, "null"]
+          format: int64
+        peakViewers:
+          type: integer
+        totalViews:
+          type: integer
+
+    BroadcastStats:
+      type: object
+      description: Point-in-time stats pushed by the broadcaster host.
+      required: [viewers, bitrateKbps, fps, width, height, updatedAt]
+      properties:
+        viewers:
+          type: integer
+        bitrateKbps:
+          type: [number, "null"]
+        fps:
+          type: [number, "null"]
+        width:
+          type: [number, "null"]
+        height:
+          type: [number, "null"]
+        updatedAt:
+          type: integer
+          format: int64
+        totalConnections:
+          type: integer
+          description: Cumulative accepted viewer connections this session.
+
+    BroadcastWithUser:
+      allOf:
+        - $ref: "#/components/schemas/Broadcast"
+        - type: object
+          required: [owner]
+          properties:
+            owner:
+              $ref: "#/components/schemas/PublicUser"
+            stats:
+              $ref: "#/components/schemas/BroadcastStats"
+
+    Recording:
+      type: object
+      description: One stored replay (WebM on the server filesystem).
+      required:
+        [
+          id,
+          title,
+          broadcastId,
+          status,
+          sizeBytes,
+          durationMs,
+          createdAt,
+          completedAt,
+        ]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        broadcastId:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [recording, complete]
+          description: "`recording` = chunks still uploading; `complete` = ready to replay."
+        sizeBytes:
+          type: integer
+        durationMs:
+          type: integer
+        createdAt:
+          type: integer
+          format: int64
+        completedAt:
+          type: [integer, "null"]
+          format: int64
+
+    UserSettings:
+      type: object
+      required: [defaultAccess, defaultTitle, discoverable]
+      properties:
+        defaultAccess:
+          $ref: "#/components/schemas/AccessPolicy"
+        defaultTitle:
+          type: string
+        discoverable:
+          type: boolean
+          description: Appear in public directory + live listing.
+
+    # ─── Auth requests / responses ─────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [username, email, displayName, password]
+      properties:
+        username:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,30}$
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        displayName:
+          type: string
+          maxLength: 80
+        password:
+          type: string
+          format: password
+          minLength: 8
+        about:
+          type: [string, "null"]
+          maxLength: 500
+        inviteCode:
+          type: string
+          maxLength: 64
+          description: Required when the server's registration mode is `invite`.
+        adminBootstrapSecret:
+          type: string
+          maxLength: 256
+          description: |
+            Required only when bootstrapping a configured administrator handle.
+            May also be sent as the `X-Admin-Bootstrap-Secret` header.
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      description: |
+        Access token + self user. The refresh token is delivered only as an
+        HttpOnly cookie (`rt`), not in this body.
+      required: [accessToken, user]
+      properties:
+        accessToken:
+          type: string
+        user:
+          $ref: "#/components/schemas/SelfUser"
+
+    RefreshResponse:
+      type: object
+      required: [accessToken]
+      properties:
+        accessToken:
+          type: string
+
+    # ─── Users requests / responses ────────────────────────────────────────
+    UpdateProfileRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          maxLength: 80
+        about:
+          type: [string, "null"]
+          maxLength: 500
+        avatarDataUrl:
+          type: string
+          description: |
+            `data:image/...` URL (raster PNG/JPEG/WebP/GIF ≤ 200 KB). The server
+            stores it and returns a hosted `avatarUrl`.
+
+    UpdateSettingsRequest:
+      type: object
+      properties:
+        defaultAccess:
+          $ref: "#/components/schemas/AccessPolicy"
+        defaultTitle:
+          type: string
+          maxLength: 120
+        discoverable:
+          type: boolean
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+          minLength: 8
+
+    DeleteAccountRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+
+    SelfProfileResponse:
+      type: object
+      required: [user, settings]
+      properties:
+        user:
+          $ref: "#/components/schemas/SelfUser"
+        settings:
+          $ref: "#/components/schemas/UserSettings"
+
+    SearchResponse:
+      type: object
+      required: [users, broadcasts]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicUser"
+        broadcasts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BroadcastWithUser"
+
+    UserProfileResponse:
+      type: object
+      description: Public profile plus the user's current live broadcast (if any).
+      required: [user, live]
+      properties:
+        user:
+          $ref: "#/components/schemas/PublicUser"
+        live:
+          type: [object, "null"]
+          description: Null when not live.
+          allOf:
+            - $ref: "#/components/schemas/BroadcastWithUser"
+
+    FollowingResponse:
+      type: object
+      required: [following]
+      properties:
+        following:
+          type: boolean
+
+    # ─── Broadcast requests / responses ────────────────────────────────────
+    StartBroadcastRequest:
+      type: object
+      description: "Start a broadcast (broadcaster host: web page or extension)."
+      required: [title, access, source, peerId]
+      properties:
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: [string, "null"]
+          maxLength: 1000
+        access:
+          $ref: "#/components/schemas/AccessPolicy"
+        source:
+          $ref: "#/components/schemas/CaptureSource"
+        peerId:
+          type: string
+          maxLength: 200
+          description: Fresh random PeerJS peer id chosen by the host.
+        accessCode:
+          type: string
+          minLength: 6
+          maxLength: 64
+          description: Required when `access` is `code`.
+
+    StartBroadcastResponse:
+      type: object
+      required: [broadcast]
+      properties:
+        broadcast:
+          $ref: "#/components/schemas/Broadcast"
+
+    ListBroadcastsResponse:
+      type: object
+      required: [broadcasts]
+      properties:
+        broadcasts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BroadcastWithUser"
+
+    UpdateStatsRequest:
+      type: object
+      required: [stats]
+      properties:
+        stats:
+          type: object
+          required: [viewers, bitrateKbps, fps, width, height]
+          properties:
+            viewers:
+              type: integer
+              minimum: 0
+            bitrateKbps:
+              type: [number, "null"]
+            fps:
+              type: [number, "null"]
+            width:
+              type: [number, "null"]
+            height:
+              type: [number, "null"]
+            totalConnections:
+              type: integer
+              minimum: 0
+
+    # ─── Session / ticket ──────────────────────────────────────────────────
+    ResolveResponse:
+      type: object
+      description: Viewer resolves a broadcaster's live session by @username.
+      required: [broadcast, peerId, ticket]
+      properties:
+        broadcast:
+          $ref: "#/components/schemas/BroadcastWithUser"
+        peerId:
+          type: [string, "null"]
+          description: Present only when the caller is authorised to connect.
+        ticket:
+          type: [string, "null"]
+          description: Short-lived (5 min) access ticket for authenticated/code broadcasts.
+        needsCode:
+          type: boolean
+          description: True when the broadcast requires an access code the caller has not (correctly) supplied.
+
+    VerifyTicketRequest:
+      type: object
+      required: [ticket, peerId]
+      properties:
+        ticket:
+          type: string
+        peerId:
+          type: string
+
+    VerifyTicketResponse:
+      type: object
+      required: [ok, username]
+      properties:
+        ok:
+          type: boolean
+        username:
+          type: [string, "null"]
+          description: Lowercased viewer handle of the ticketed viewer.
+
+    # ─── Reports ───────────────────────────────────────────────────────────
+    CreateReportRequest:
+      type: object
+      required: [targetUsername, reason]
+      properties:
+        targetUsername:
+          type: string
+          maxLength: 30
+        broadcastId:
+          type: [string, "null"]
+          maxLength: 64
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+
+    # ─── Admin ─────────────────────────────────────────────────────────────
+    AdminUsersResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+
+    BanUserRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+
+    SetRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/UserRole"
+
+    ResolveReportRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [resolved, dismissed]
+
+    MetricsDay:
+      type: object
+      required: [date, count]
+      properties:
+        date:
+          type: string
+          description: "YYYY-MM-DD (UTC)."
+        count:
+          type: integer
+
+    MetricsPeakDay:
+      type: object
+      required: [date, peak]
+      properties:
+        date:
+          type: string
+          description: "YYYY-MM-DD (UTC)."
+        peak:
+          type: integer
+
+    AdminMetrics:
+      type: object
+      description: Aggregate admin stats + time-series for the dashboard Metrics tab.
+      required: [totals, broadcastsPerDay, usersPerDay, concurrentPeakPerDay]
+      properties:
+        totals:
+          type: object
+          required:
+            [
+              users,
+              admins,
+              banned,
+              unverified,
+              broadcasts,
+              liveBroadcasts,
+              currentViewers,
+              totalViews,
+              peakConcurrentViewers,
+              peakConcurrentToday,
+            ]
+          properties:
+            users:
+              type: integer
+            admins:
+              type: integer
+            banned:
+              type: integer
+            unverified:
+              type: integer
+              description: Users who have not verified their email yet.
+            broadcasts:
+              type: integer
+              description: All-time ended broadcasts.
+            liveBroadcasts:
+              type: integer
+            currentViewers:
+              type: integer
+              description: Sum of viewers across currently live broadcasts.
+            totalViews:
+              type: integer
+              description: All-time viewer count (cumulative).
+            peakConcurrentViewers:
+              type: integer
+              description: Highest peak_viewers for any single broadcast (all-time).
+            peakConcurrentToday:
+              type: integer
+              description: Highest peak_viewers among broadcasts that started today (UTC).
+        broadcastsPerDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsDay"
+        usersPerDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsDay"
+        concurrentPeakPerDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsPeakDay"
+
+    AdminMetricsResponse:
+      type: object
+      required: [metrics, days]
+      properties:
+        metrics:
+          $ref: "#/components/schemas/AdminMetrics"
+        days:
+          type: integer
+
+    CreateInviteRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 200
+        maxUses:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 100000
+          description: Max uses; omit/null for unlimited.
+        expiresInHours:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 8760
+          description: Hours until the code expires; omit for never.
+
+    AdminInvitesResponse:
+      type: object
+      required: [invites]
+      properties:
+        invites:
+          type: array
+          items:
+            $ref: "#/components/schemas/Invite"
+
+    # ─── Email ─────────────────────────────────────────────────────────────
+    ChangeEmailRequest:
+      type: object
+      required: [newEmail, currentPassword]
+      properties:
+        newEmail:
+          type: string
+          format: email
+        currentPassword:
+          type: string
+          format: password
+          description: Required to re-authenticate the email change.
+
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+          format: password
+          minLength: 8
+
+    # ─── Push notifications ────────────────────────────────────────────────
+    PushSubscriptionData:
+      type: object
+      description: Full Web Push subscription as handed to pushManager.subscribe().
+      required: [endpoint, keys]
+      properties:
+        endpoint:
+          type: string
+          format: uri
+        expirationTime:
+          type: [integer, "null"]
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+
+    PushSubscribeRequest:
+      type: object
+      required: [subscription]
+      properties:
+        subscription:
+          $ref: "#/components/schemas/PushSubscriptionData"
+
+    PushUnsubscribeRequest:
+      type: object
+      required: [endpoint]
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          description: The endpoint currently registered; matches the persisted record.
+
+    PushVapidKeyResponse:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: string
+
+    # ─── Recordings ────────────────────────────────────────────────────────
+    CreateRecordingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          description: Defaults to `Live broadcast`.
+        broadcastId:
+          type: string
+          maxLength: 64
+          description: Must belong to the caller when given.
+
+    AppendChunkResponse:
+      type: object
+      required: [ok, sizeBytes]
+      properties:
+        ok:
+          type: boolean
+        sizeBytes:
+          type: integer
+          description: Running total recording size after this chunk.
+
+    FinalizeRecordingRequest:
+      type: object
+      properties:
+        durationMs:
+          type: integer
+          minimum: 0
+          maximum: 86400000
+          default: 0
+          description: Wall-clock duration of the recording, summed by the client.
+
+    RecordingListResponse:
+      type: object
+      required: [recordings]
+      properties:
+        recordings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Recording"
+
+    RecordingResponse:
+      type: object
+      required: [recording]
+      properties:
+        recording:
+          $ref: "#/components/schemas/Recording"
+
+    # ─── Runtime config ────────────────────────────────────────────────────
+    RTCIceServerConfig:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: [string, array]
+          items:
+            type: string
+        username:
+          type: string
+          description: Present for TURN relays (time-scoped ephemeral credentials).
+        credential:
+          type: string
+
+    SignalConfig:
+      type: object
+      required: [host, port, path, secure]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        path:
+          type: string
+          description: PeerJS broker path (default `/peerjs`).
+        secure:
+          type: boolean
+        key:
+          type: string
+          description: PeerJS room key (default `peercast`).
+        iceServers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RTCIceServerConfig"
+
+    RuntimeConfig:
+      type: object
+      description: Public runtime config the web app fetches on boot.
+      required: [signal, appName, version, registration, adminBootstrap]
+      properties:
+        signal:
+          $ref: "#/components/schemas/SignalConfig"
+        appName:
+          type: string
+        version:
+          type: string
+        registration:
+          $ref: "#/components/schemas/RegistrationMode"
+        adminBootstrap:
+          type: boolean
+          description: Whether the operator configured a secret-backed admin bootstrap path.
