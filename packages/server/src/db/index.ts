@@ -77,7 +77,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(username_lc);
-CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family);
 
 -- Short-lived viewer access tickets for authenticated/code broadcasts.
 CREATE TABLE IF NOT EXISTS tickets (
@@ -210,6 +209,9 @@ ensureColumn(
 // Refresh-token reuse detection columns (existing DBs).
 ensureColumn("refresh_tokens", "family", "family TEXT");
 ensureColumn("refresh_tokens", "consumed_at", "consumed_at INTEGER");
+db.exec(
+  "CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family)",
+);
 
 // ─── One-time data-integrity repairs ─────────────────────────────────────────
 // These run on every boot but are idempotent and fast.
