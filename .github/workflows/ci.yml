@@ -116,43 +116,69 @@ jobs:
           OCI_HOST: ${{ secrets.OCI_HOST }}
           OCI_USER: ${{ secrets.OCI_USER }}
         run: |
-          ssh -i ~/.ssh/oci_deploy_key "$OCI_USER@$OCI_HOST" \
+          ssh \
+            -i ~/.ssh/oci_deploy_key \
+            -o ConnectTimeout=30 \
+            -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            "$OCI_USER@$OCI_HOST" \
             "RELEASE_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
             export PATH="/opt/peercast-node/bin:$PATH"
             release="/opt/peercast-releases/$RELEASE_SHA"
-          archive="/tmp/peercast-release-$RELEASE_SHA.tgz"
+            archive="/tmp/peercast-release-$RELEASE_SHA.tgz"
 
-          sudo mkdir -p /opt/peercast-releases
-          sudo chown opc:opc /opt/peercast-releases
-          rm -rf "$release"
-          mkdir -p "$release"
-          tar -xzf "$archive" -C "$release"
-          rm -f "$archive"
+            sudo mkdir -p /opt/peercast-releases
+            sudo chown opc:opc /opt/peercast-releases
+            rm -rf "$release"
+            mkdir -p "$release"
+            tar -xzf "$archive" -C "$release"
+            rm -f "$archive"
 
-          cd "$release"
-          npm ci --omit=dev --ignore-scripts
-          npm rebuild better-sqlite3
+            cd "$release"
+            npm ci --omit=dev --ignore-scripts
+            npm rebuild better-sqlite3
 
-          sudo systemctl stop peercast
-          sudo rm -rf /opt/peercast-app.previous
-          if [ -e /opt/peercast-app ]; then
-            sudo mv /opt/peercast-app /opt/peercast-app.previous
-          fi
-          sudo mv "$release" /opt/peercast-app
-          sudo restorecon -RF /opt/peercast-app
-          if sudo systemctl start peercast \
-            && sudo systemctl is-active --quiet peercast \
-            && curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8787/api/health; then
-            exit 0
-          fi
-
-          sudo systemctl stop peercast || true
-          sudo rm -rf /opt/peercast-app
-          if [ -e /opt/peercast-app.previous ]; then
-            sudo mv /opt/peercast-app.previous /opt/peercast-app
+            sudo systemctl stop peercast || true
+            sudo systemctl reset-failed peercast || true
+            sudo rm -rf /opt/peercast-app.previous
+            if [ -e /opt/peercast-app ]; then
+              sudo mv /opt/peercast-app /opt/peercast-app.previous
+            fi
+            sudo mv "$release" /opt/peercast-app
             sudo restorecon -RF /opt/peercast-app
-            sudo systemctl start peercast
-          fi
-          exit 1
+
+            health_check() {
+              local attempt
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if curl --fail --silent --show-error --max-time 5 \
+                    http://127.0.0.1:8787/api/health; then
+                  return 0
+                fi
+                sleep 2
+              done
+              return 1
+            }
+
+            if sudo systemctl start peercast \
+              && sudo systemctl is-active --quiet peercast \
+              && health_check; then
+              exit 0
+            fi
+
+            echo "PeerCast failed to start or pass the local health check."
+            sudo systemctl status peercast --no-pager -l || true
+            sudo journalctl -u peercast -n 100 --no-pager || true
+            sudo ss -ltnp || true
+
+            sudo systemctl stop peercast || true
+            sudo rm -rf /opt/peercast-app
+            if [ -e /opt/peercast-app.previous ]; then
+              sudo mv /opt/peercast-app.previous /opt/peercast-app
+              sudo restorecon -RF /opt/peercast-app
+              sudo systemctl reset-failed peercast || true
+              sudo systemctl start peercast
+            fi
+            exit 1
           REMOTE
