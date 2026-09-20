@@ -70,10 +70,10 @@ const baseQueryWithReauth: BaseQueryFn<
   string | FetchArgs,
   unknown,
   FetchBaseQueryError
-> = async (args, api, extraOptions) => {
-  let result = await rawBaseQuery(args, api, extraOptions);
+> = async (args, apiCtx, extraOptions) => {
+  let result = await rawBaseQuery(args, apiCtx, extraOptions);
   if (result.error?.status === 401) {
-    const { user } = (api.getState() as RootState).auth;
+    const { user } = (apiCtx.getState() as RootState).auth;
     // Only attempt a refresh if we think we're logged in (have a cached user).
     if (user) {
       // No request body — the HttpOnly refresh-token cookie is sent automatically.
@@ -82,7 +82,7 @@ const baseQueryWithReauth: BaseQueryFn<
           try {
             return await rawBaseQuery(
               { url: "/auth/refresh", method: "POST" },
-              api,
+              apiCtx,
               extraOptions,
             );
           } finally {
@@ -93,10 +93,13 @@ const baseQueryWithReauth: BaseQueryFn<
       const refresh = await refreshInFlight;
       if (refresh.data) {
         const data = refresh.data as { accessToken: string };
-        api.dispatch(tokensUpdated({ accessToken: data.accessToken }));
-        result = await rawBaseQuery(args, api, extraOptions);
+        apiCtx.dispatch(tokensUpdated({ accessToken: data.accessToken }));
+        result = await rawBaseQuery(args, apiCtx, extraOptions);
       } else {
-        api.dispatch(loggedOut());
+        apiCtx.dispatch(loggedOut());
+        // The session is gone; drop every cached result (the old user's
+        // profile, broadcasts, etc.) so a later login can't surface stale data.
+        apiCtx.dispatch(api.util.resetApiState());
       }
     }
   }
@@ -124,11 +127,15 @@ export const api = createApi({
     getConfig: b.query<RuntimeConfig, void>({ query: () => "/config" }),
 
     // ─── auth ────────────────────────────────────────────────────────
+    // `Me` is invalidated on login/register so a cached profile from a
+    // previous account can never linger after a session switch.
     register: b.mutation<AuthResponse, RegisterRequest>({
       query: (body) => ({ url: "/auth/register", method: "POST", body }),
+      invalidatesTags: ["Me"],
     }),
     login: b.mutation<AuthResponse, LoginRequest>({
       query: (body) => ({ url: "/auth/login", method: "POST", body }),
+      invalidatesTags: ["Me"],
     }),
 
     // ─── profile / settings ──────────────────────────────────────────

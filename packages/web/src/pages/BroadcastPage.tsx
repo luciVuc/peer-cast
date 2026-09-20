@@ -258,7 +258,7 @@ export function BroadcastPage() {
           });
         },
         onChat: (msg) => setChat((prev) => [...prev.slice(-199), msg]),
-        hostName: me?.user.displayName || me?.user.username || "Host",
+        hostName: me?.user.displayName || broadcast.username || "Host",
         onError: (e) => dispatch(addToast(e.message, "error")),
       });
 
@@ -270,7 +270,10 @@ export function BroadcastPage() {
           broadcastId: broadcast.id,
           title: broadcast.title,
           access: broadcast.access as AccessPolicy,
-          viewerUsername: me?.user.username ?? "",
+          // Take the owner from the server's start response: it's
+          // authoritative for THIS session and immune to any stale `me` cache
+          // left over from a previously logged-in account.
+          viewerUsername: broadcast.username,
         }),
       );
     } catch (err) {

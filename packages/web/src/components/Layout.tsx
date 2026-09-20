@@ -10,7 +10,7 @@ import { useAppDispatch, useAppSelector } from "../store";
 import { loggedOut } from "../store/authSlice";
 import { broadcastStopped } from "../store/broadcastSlice";
 import { broadcastService } from "../lib/broadcastService";
-import { useEndBroadcastMutation, useGetConfigQuery } from "../store/api";
+import { useEndBroadcastMutation, useGetConfigQuery, api } from "../store/api";
 import { Avatar } from "./Avatar";
 
 function DrawerLink({
@@ -118,6 +118,10 @@ export function Layout() {
     broadcastService.cleanup();
     dispatch(broadcastStopped());
     dispatch(loggedOut());
+    // Drop every cached API response owned by the previous session before the
+    // next login, otherwise RTK Query can keep serving the old user's profile
+    // and poison derived state (e.g. the broadcast viewer link).
+    dispatch(api.util.resetApiState());
     setDrawerOpen(false);
     navigate("/");
   }
