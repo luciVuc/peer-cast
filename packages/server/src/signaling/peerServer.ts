@@ -68,10 +68,17 @@ export function createPeerServer(httpServer: Server) {
         usernameLc = consumeSignalingTicketSync(rawToken);
       }
 
-      // 2. Fall back to JWT (old path, for backward compat).
+      // 2. Fall back to JWT (old path, for backward compat). The claim must
+      //    still match the account's current token version — a reset/revoked
+      //    access token must not authenticate signaling either.
       if (!usernameLc) {
         const claims = verifyAccessToken(rawToken);
-        if (claims) usernameLc = claims.sub;
+        if (claims) {
+          const user = usersRepo.getRaw(claims.sub);
+          if (user && user.token_version === claims.tv) {
+            usernameLc = claims.sub;
+          }
+        }
       }
 
       if (evictIfBanned(usernameLc, socket)) {

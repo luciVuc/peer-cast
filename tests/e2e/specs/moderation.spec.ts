@@ -5,6 +5,7 @@ async function registerToken(
   request: import("@playwright/test").APIRequestContext,
   baseURL: string,
   username: string,
+  adminBootstrapSecret?: string,
 ) {
   const res = await request.post(`${baseURL}/api/auth/register`, {
     data: {
@@ -12,6 +13,7 @@ async function registerToken(
       email: `${username}@example.com`,
       displayName: username,
       password: "secret123",
+      ...(adminBootstrapSecret ? { adminBootstrapSecret } : {}),
     },
   });
   return (await res.json()).accessToken as string;
@@ -27,8 +29,13 @@ test("banned accounts are evicted at the signaling handshake", async ({
   baseURL,
 }) => {
   const base = baseURL!;
-  // Bootstrap an admin (ADMIN_USERNAMES=admin) + a victim.
-  const adminToken = await registerToken(request, base, "admin");
+  // Bootstrap an admin (ADMIN_USERNAMES=admin + bootstrap secret) + a victim.
+  const adminToken = await registerToken(
+    request,
+    base,
+    "admin",
+    "e2e-admin-secret",
+  );
   const victim = uniqueUsername("victim");
   const victimToken = await registerToken(request, base, victim);
 

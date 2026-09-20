@@ -49,6 +49,7 @@ export default defineConfig({
       PUBLIC_SECURE: "false",
       CORS_ORIGINS: "*",
       ADMIN_USERNAMES: "admin",
+      ADMIN_BOOTSTRAP_SECRET: "e2e-admin-secret",
     },
   },
 });

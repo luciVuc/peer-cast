@@ -31,6 +31,8 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const user = usersRepo.getRaw(claims.sub);
   if (!user) return next(unauthorized());
   if (user.banned) return next(forbidden("account suspended", "BANNED"));
+  if (claims.tv !== user.token_version)
+    return next(unauthorized("session revoked", "TOKEN_STALE"));
   req.auth = {
     usernameLc: user.username_lc,
     username: user.username,
@@ -45,7 +47,7 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   const claims = token ? verifyAccessToken(token) : null;
   if (claims) {
     const user = usersRepo.getRaw(claims.sub);
-    if (user && !user.banned) {
+    if (user && !user.banned && claims.tv === user.token_version) {
       req.auth = {
         usernameLc: user.username_lc,
         username: user.username,

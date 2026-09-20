@@ -1,6 +1,6 @@
 # PeerCast — Independent Verification Report (2nd pass)
 
-**Branch:** `webapp-nodejs` · **Version:** 2.0.0
+**Branch:** `webapp-nodejs` · **Version:** see root `package.json`
 **Scope:** Fresh, independent re-audit of the full monorepo (shared, server,
 web, extension, Docker, CI, docs), performed after the first `AUDIT_REPORT.md`
 remediation pass. Goal: confirm the earlier fixes actually landed and surface

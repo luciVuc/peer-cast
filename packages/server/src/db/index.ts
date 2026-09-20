@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   banned           INTEGER NOT NULL DEFAULT 0,
   banned_reason    TEXT,
   banned_at        INTEGER,
+  token_version    INTEGER NOT NULL DEFAULT 0,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
@@ -63,13 +64,20 @@ CREATE INDEX IF NOT EXISTS idx_broadcasts_owner ON broadcasts(username_lc, start
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts(status, started_at DESC);
 
 -- Refresh tokens (rotating). Access tokens are stateless JWTs.
+-- family groups rotations of one session so an already-consumed token can
+-- be detected and the whole family revoked (reuse detection). consumed_at
+-- marks a rotated/used token instead of deleting it immediately (purged on
+-- expiry) so replay of an old token is observable.
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   token_hash   TEXT PRIMARY KEY,
   username_lc  TEXT NOT NULL REFERENCES users(username_lc) ON DELETE CASCADE,
+  family       TEXT,
+  consumed_at  INTEGER,
   expires_at   INTEGER NOT NULL,
   created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(username_lc);
+CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family);
 
 -- Short-lived viewer access tickets for authenticated/code broadcasts.
 CREATE TABLE IF NOT EXISTS tickets (
@@ -193,6 +201,15 @@ ensureColumn(
 ensureColumn("users", "banned", "banned INTEGER NOT NULL DEFAULT 0");
 ensureColumn("users", "banned_reason", "banned_reason TEXT");
 ensureColumn("users", "banned_at", "banned_at INTEGER");
+ensureColumn(
+  "users",
+  "token_version",
+  "token_version INTEGER NOT NULL DEFAULT 0",
+);
+
+// Refresh-token reuse detection columns (existing DBs).
+ensureColumn("refresh_tokens", "family", "family TEXT");
+ensureColumn("refresh_tokens", "consumed_at", "consumed_at INTEGER");
 
 // ─── One-time data-integrity repairs ─────────────────────────────────────────
 // These run on every boot but are idempotent and fast.

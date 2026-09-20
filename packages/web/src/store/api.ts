@@ -56,7 +56,16 @@ const rawBaseQuery = fetchBaseQuery({
   },
 });
 
-/** Base query that transparently refreshes the access token on a 401. */
+/** Base query that transparently refreshes the access token on a 401.
+ *
+ * The refresh is single-flight: refresh tokens rotate on every use and the
+ * server now revokes an entire token family when a consumed token is
+ * replayed. Two concurrent 401-drivers both calling /auth/refresh would have
+ * one of them replay the just-rotated cookie, killing the session for the
+ * legit client too. Sharing one in-flight promise avoids that race.
+ */
+let refreshInFlight: Promise<ReturnType<typeof rawBaseQuery>> | null = null;
+
 const baseQueryWithReauth: BaseQueryFn<
   string | FetchArgs,
   unknown,
@@ -68,11 +77,20 @@ const baseQueryWithReauth: BaseQueryFn<
     // Only attempt a refresh if we think we're logged in (have a cached user).
     if (user) {
       // No request body — the HttpOnly refresh-token cookie is sent automatically.
-      const refresh = await rawBaseQuery(
-        { url: "/auth/refresh", method: "POST" },
-        api,
-        extraOptions,
-      );
+      if (!refreshInFlight) {
+        refreshInFlight = (async () => {
+          try {
+            return await rawBaseQuery(
+              { url: "/auth/refresh", method: "POST" },
+              api,
+              extraOptions,
+            );
+          } finally {
+            refreshInFlight = null;
+          }
+        })();
+      }
+      const refresh = await refreshInFlight;
       if (refresh.data) {
         const data = refresh.data as { accessToken: string };
         api.dispatch(tokensUpdated({ accessToken: data.accessToken }));

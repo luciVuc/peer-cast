@@ -83,7 +83,7 @@ peer-cast/
 ├── tests/e2e/       Playwright: UI flows + raw WebRTC + moderation/signaling eviction.
 ├── turn/            coturn config for the optional bundled TURN relay.
 ├── Dockerfile · docker-compose.yml · .env.example
-├── package.json     npm workspaces root; version SSOT (2.0.0)
+├── package.json     npm workspaces root; version SSOT
 ├── tsconfig.base.json
 ├── README.md · AGENTS.md · ROADMAP.md · CRYPTO.md (historical)
 ```
@@ -158,9 +158,12 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
 12. **JWT_SECRET must be set in production** or sessions reset every restart.
     The config module warns and uses a random ephemeral secret as a fallback.
 
-13. **Version SSOT is root `package.json`** (2.0.0). Keep the extension
-    `manifest.json`, extension `package.json`, and `server/src/config.ts`
-    `APP_VERSION` default in sync.
+13. **Version SSOT is root `package.json`.** `npm run check:versions` asserts
+    every version-carrying file matches it (workspace `package.json`s,
+    extension `manifest.json` + `package.json`, `openapi.yaml`, image tag,
+    popup badge). Do NOT copy the version into code or docs — derive it from
+    the root manifest. This includes `server/src/config.ts`: its fallback is a
+    marker (`dev`), never a literal version. Set `APP_VERSION` to override.
 
 14. **SQLite path is a Docker volume** (`/data`). Never commit `*.db` files.
 

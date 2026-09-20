@@ -23,6 +23,10 @@ export async function verifyPassword(
 export interface AccessClaims {
   sub: string; // username_lc
   username: string; // display-case handle
+  /** Token version — bumped on password/email changes so old access tokens
+   * die immediately instead of lingering for the JWT TTL. Missing claim on
+   * old tokens decodes as 0 (matches the default column value). */
+  tv: number;
 }
 
 export function signAccessToken(claims: AccessClaims): string {
@@ -36,7 +40,11 @@ export function verifyAccessToken(token: string): AccessClaims | null {
     const decoded = jwt.verify(token, config.jwt.secret) as jwt.JwtPayload;
     if (typeof decoded.sub !== "string" || typeof decoded.username !== "string")
       return null;
-    return { sub: decoded.sub, username: decoded.username };
+    return {
+      sub: decoded.sub,
+      username: decoded.username,
+      tv: typeof decoded.tv === "number" ? decoded.tv : 0,
+    };
   } catch {
     return null;
   }
@@ -46,30 +54,75 @@ export function verifyAccessToken(token: string): AccessClaims | null {
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 
-export function issueRefreshToken(usernameLc: string): string {
+/**
+ * Issue a refresh token and store it (hashed).
+ * `family` groups rotations of one session; a fresh random family is created
+ * when none is provided (new login). Reuse of a consumed token revokes the
+ * whole family via consumeRefreshToken().
+ */
+export function issueRefreshToken(usernameLc: string, family?: string): string {
   const token = randomBytes(48).toString("base64url");
+  const fam = family ? family : randomBytes(16).toString("base64url");
   const now = Date.now();
   db.prepare(
-    `INSERT INTO refresh_tokens (token_hash, username_lc, expires_at, created_at)
-     VALUES (?, ?, ?, ?)`,
-  ).run(sha256(token), usernameLc, now + config.jwt.refreshTtlSec * 1000, now);
+    `INSERT INTO refresh_tokens
+       (token_hash, username_lc, family, consumed_at, expires_at, created_at)
+     VALUES (?, ?, ?, NULL, ?, ?)`,
+  ).run(
+    sha256(token),
+    usernameLc,
+    fam,
+    now + config.jwt.refreshTtlSec * 1000,
+    now,
+  );
   return token;
 }
 
-/** Consume (rotate) a refresh token: verify + delete. Returns username_lc.
- * Rotation limits the blast radius of a leaked token. Future hardening:
- * track a token-family id per session and revoke the whole family when an
- * already-consumed (or expired) token is presented again (reuse detection). */
-export function consumeRefreshToken(token: string): string | null {
+/**
+ * Rotate a refresh token. The token is not deleted on use — it is marked
+ * `consumed_at` so replay is observable. Returns the account (and token
+ * family) to continue the session, or null on invalid/expired/consumed input.
+ *
+ * Reuse detection: presenting an already-consumed token is the classic
+ * token-theft signal, so the entire family is revoked (all sessions on that
+ * login's rotation chain are killed; the victim re-authenticates with the
+ * password). Expired tokens are also treated as fatal to the family.
+ */
+export function consumeRefreshToken(token: string): {
+  usernameLc: string;
+  family: string;
+} | null {
   const hash = sha256(token);
   const row = db
     .prepare(
-      `SELECT username_lc, expires_at FROM refresh_tokens WHERE token_hash = ?`,
+      `SELECT username_lc, family, consumed_at, expires_at
+       FROM refresh_tokens WHERE token_hash = ?`,
     )
-    .get(hash) as { username_lc: string; expires_at: number } | undefined;
-  db.prepare(`DELETE FROM refresh_tokens WHERE token_hash = ?`).run(hash);
-  if (!row || row.expires_at < Date.now()) return null;
-  return row.username_lc;
+    .get(hash) as
+    | {
+        username_lc: string;
+        family: string | null;
+        consumed_at: number | null;
+        expires_at: number;
+      }
+    | undefined;
+
+  if (!row) return null;
+
+  // An already-rotated token being presented again (or an expired one) ⇒
+  // someone replayed a credential. Nuke the whole session family.
+  if (row.consumed_at || row.expires_at < Date.now()) {
+    if (row.family) {
+      db.prepare(`DELETE FROM refresh_tokens WHERE family = ?`).run(row.family);
+    }
+    return null;
+  }
+
+  db.prepare(
+    `UPDATE refresh_tokens SET consumed_at = ? WHERE token_hash = ?`,
+  ).run(Date.now(), hash);
+
+  return { usernameLc: row.username_lc, family: row.family ?? "" };
 }
 
 export function revokeAllRefreshTokens(usernameLc: string): void {

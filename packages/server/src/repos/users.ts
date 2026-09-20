@@ -23,6 +23,7 @@ interface UserRow {
   banned: number;
   banned_reason: string | null;
   banned_at: number | null;
+  token_version: number;
   created_at: number;
   updated_at: number;
 }
@@ -178,6 +179,17 @@ export const usersRepo = {
     db.prepare(
       `UPDATE users SET password_hash = ?, updated_at = ? WHERE username_lc = ?`,
     ).run(passwordHash, Date.now(), usernameLc);
+  },
+
+  /** Invalidate every outstanding access JWT for the user. Access tokens are
+   * stateless, so they carry a `tv` claim; middleware rejects tokens whose
+   * `tv` no longer matches this value. Call after credential-identity changes
+   * (password change/reset, verified email change). */
+  bumpTokenVersion(usernameLc: string): void {
+    db.prepare(
+      `UPDATE users SET token_version = token_version + 1, updated_at = ?
+       WHERE username_lc = ?`,
+    ).run(Date.now(), usernameLc);
   },
 
   markEmailVerified(usernameLc: string): void {

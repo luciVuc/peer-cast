@@ -79,10 +79,15 @@ function authResponse(
   username: string,
 ): AuthResponse {
   const self = usersRepo.getSelf(usernameLc)!;
+  const raw = usersRepo.getRaw(usernameLc)!;
   const rt = issueRefreshToken(usernameLc);
   res.cookie(RT_COOKIE, rt, rtCookieOpts());
   return {
-    accessToken: signAccessToken({ sub: usernameLc, username }),
+    accessToken: signAccessToken({
+      sub: usernameLc,
+      username,
+      tv: raw.token_version,
+    }),
     user: self.user,
   };
 }
@@ -111,15 +116,18 @@ authRouter.post(
       }
     }
 
-    if (usersRepo.getRaw(usernameLc)) {
-      throw conflict("username already taken", "USERNAME_TAKEN");
-    }
-    if (usersRepo.emailExists(body.email.toLowerCase())) {
-      // Avoid confirming that this email is registered (enumeration).
-      // Suggest login or password-reset instead of a hard 409.
+    // Username and email collisions return an IDENTICAL response: usernames are
+    // public data, but whether a given email is registered is the one piece of
+    // private information an anonymous body can probe. A distinct message or
+    // code for `EMAIL_TAKEN` would confirm registration (enumeration), so
+    // both paths are collapsed into a single ambiguous 409.
+    if (
+      usersRepo.getRaw(usernameLc) ||
+      usersRepo.emailExists(body.email.toLowerCase())
+    ) {
       throw conflict(
-        "an account with this email address already exists — try signing in or resetting your password",
-        "EMAIL_TAKEN",
+        "an account already exists with that username or email",
+        "ACCOUNT_EXISTS",
       );
     }
 
@@ -194,12 +202,12 @@ authRouter.post(
     // The refresh token travels as an HttpOnly cookie, not in the request body.
     const rt = req.cookies?.[RT_COOKIE] as string | undefined;
     if (!rt) throw unauthorized("no refresh token");
-    const usernameLc = consumeRefreshToken(rt);
-    if (!usernameLc) {
+    const rotated = consumeRefreshToken(rt);
+    if (!rotated) {
       clearRtCookie(res);
       throw unauthorized("invalid refresh token");
     }
-    const user = usersRepo.getRaw(usernameLc);
+    const user = usersRepo.getRaw(rotated.usernameLc);
     if (!user) {
       clearRtCookie(res);
       throw unauthorized("invalid refresh token");
@@ -208,12 +216,13 @@ authRouter.post(
       clearRtCookie(res);
       throw forbidden("account suspended", "BANNED");
     }
-    const newRt = issueRefreshToken(usernameLc);
+    const newRt = issueRefreshToken(rotated.usernameLc, rotated.family);
     res.cookie(RT_COOKIE, newRt, rtCookieOpts());
     const out: RefreshResponse = {
       accessToken: signAccessToken({
-        sub: usernameLc,
+        sub: rotated.usernameLc,
         username: user.username,
+        tv: user.token_version,
       }),
     };
     res.json(out);

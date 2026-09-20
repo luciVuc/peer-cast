@@ -97,11 +97,11 @@ describe("password reset", () => {
   });
 
   it("reset-password with valid token sets a new password", async () => {
-    await register();
-    const token = emailTokensRepo.createReset("alice");
+    const { token } = await register();
+    const reset = emailTokensRepo.createReset("alice");
     const res = await request(app)
       .post("/api/auth/reset-password")
-      .send({ token, newPassword: "newpassword123" });
+      .send({ token: reset, newPassword: "newpassword123" });
     expect(res.status).toBe(200);
 
     // Old password rejected.
@@ -109,6 +109,13 @@ describe("password reset", () => {
       .post("/api/auth/login")
       .send({ username: "alice", password: "secret123" });
     expect(oldLogin.status).toBe(401);
+
+    // The pre-reset access JWT is invalidated immediately (token version bump).
+    const stale = await request(app)
+      .get("/api/users/me")
+      .set("Authorization", `Bearer ${token}`);
+    expect(stale.status).toBe(401);
+    expect(stale.body.code).toBe("TOKEN_STALE");
 
     // New password works.
     const newLogin = await request(app)
@@ -202,8 +209,18 @@ describe("email change", () => {
     const updated = await request(app)
       .get("/api/users/me")
       .set({ Authorization: `Bearer ${token}` });
-    expect(updated.body.user.email).toBe("new@example.com");
-    expect(updated.body.user.emailVerified).toBe(true);
+    expect(updated.status).toBe(401); // session revoked on the identity change
+
+    // A fresh login sees the new address.
+    const relogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "alice", password: "secret123" });
+    expect(relogin.status).toBe(200);
+    const fresh = await request(app)
+      .get("/api/users/me")
+      .set("Authorization", `Bearer ${relogin.body.accessToken}`);
+    expect(fresh.body.user.email).toBe("new@example.com");
+    expect(fresh.body.user.emailVerified).toBe(true);
   });
 
   it("confirmation token is single-use — the replay is rejected", async () => {
@@ -293,10 +310,22 @@ describe("email change", () => {
       .post("/api/auth/refresh")
       .set("Cookie", rtCookie);
     expect(refreshed.status).toBe(401);
+    // The access JWT is also dead: the identity change bumps the token version.
     const me = await request(app)
       .get("/api/users/me")
       .set({ Authorization: `Bearer ${token}` });
-    expect(me.body.user.email).toBe("new@example.com");
+    expect(me.status).toBe(401);
+    expect(me.body.code).toBe("TOKEN_STALE");
+
+    // Fresh login confirms the session was really revoked, and the new email.
+    const relogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "alice", password: "secret123" });
+    expect(relogin.status).toBe(200);
+    const freshMe = await request(app)
+      .get("/api/users/me")
+      .set("Authorization", `Bearer ${relogin.body.accessToken}`);
+    expect(freshMe.body.user.email).toBe("new@example.com");
   });
 });
 

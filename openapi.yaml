@@ -1,6 +1,7 @@
 openapi: 3.1.1
 info:
   title: PeerCast API
+  # Kept equal to the root package.json SSOT by `npm run check:versions`.
   version: 1.1.4
   description: |
     Self-hosted, WebRTC peer-to-peer live broadcast platform. Everything runs on

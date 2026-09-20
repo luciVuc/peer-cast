@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PeerCast",
-  "version": "2.0.0",
+  "version": "1.1.4",
   "description": "Broadcast this tab (or your whole screen) to viewers anywhere over direct peer-to-peer WebRTC. Connects to your self-hosted PeerCast server.",
   "minimum_chrome_version": "116",
   "icons": {

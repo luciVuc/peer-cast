@@ -1,6 +1,6 @@
 # PeerCast — Production Readiness Audit
 
-**Branch:** `webapp-nodejs` · **Version:** 2.0.0
+**Branch:** `webapp-nodejs` · **Version:** see root `package.json`
 **Date:** audit performed against current `HEAD` (`0b6ec77`)
 **Scope:** full monorepo — shared types, Node/Express server, React PWA, Chrome
 extension, Docker/compose, TURN config, CI, docs.
@@ -271,8 +271,11 @@ future hardening (store a token "family" id and revoke all on reuse).
   multi-stage build, correct workspace layout preservation.
 - **`docker-compose.yml`** hard-requires `JWT_SECRET` via `${JWT_SECRET:?…}`.
 - **Config** hard-fails on missing/short/placeholder `JWT_SECRET` in prod.
-- **Version SSOT** consistent at 2.0.0 across root, extension manifest,
-  extension package, and `config.ts` `APP_VERSION` default (hard-rule #13).
+- **Version SSOT** is root `package.json`; consistency is enforced by
+  `npm run check:versions` across workspace manifests, the extension
+  `manifest.json`/`package.json`, `openapi.yaml`, and image tag (hard-rule #13).
+  Server/config code never embeds a version literal — `config.ts` falls back to
+  `APP_VERSION` env or the `dev` marker.
 - **Express 5** is in use, so the `/*path` SPA catch-all wildcard is valid.
 
 ---

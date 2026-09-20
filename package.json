@@ -24,7 +24,8 @@
     "test": "npm run test -w @peer-cast/server && npm run test -w @peer-cast/web",
     "test:e2e": "npm run build && npm run test -w @peer-cast/e2e",
     "format": "npx -y prettier --write .",
-    "format:check": "npx -y prettier --check ."
+    "format:check": "npx -y prettier --check .",
+    "check:versions": "node scripts/check-versions.mjs"
   },
   "engines": {
     "node": ">=20"

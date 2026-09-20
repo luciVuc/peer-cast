@@ -83,8 +83,11 @@ function resolveWebDir(): string | null {
 }
 
 /** Resolve the repo-root package.json version (the version SSOT). Falls back
- * to a legacy constant for bare server-only installs where the root manifest
- * is unreachable. The APP_VERSION env var always wins when set. */
+ * to a legacy marker for bare server-only installs where no manifest is
+ * reachable. This is deliberately NEVER a copied version literal — the drift
+ * guard (`npm run check:versions`) asserts that fact. In practice the root or
+ * workspace manifest is always present (the Docker image ships it), so "dev"
+ * only surfaces in broken ad-hoc installs. APP_VERSION env always wins. */
 function packageVersion(): string {
   const candidates = [
     resolve(dirname(fileURLToPath(import.meta.url)), "../../../package.json"),
@@ -102,7 +105,7 @@ function packageVersion(): string {
       // unreadable JSON — try the next candidate
     }
   }
-  return "2.0.0";
+  return "dev";
 }
 
 export const config = {

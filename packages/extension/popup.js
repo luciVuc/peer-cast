@@ -34,6 +34,12 @@ let pollTimer = null;
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 async function init() {
+  // Version badge is derived at runtime from the extension manifest (which
+  // `npm run check:versions` keeps equal to the root package.json SSOT) —
+  // never hardcoded in the markup.
+  const manifestVersion = chrome.runtime?.getManifest()?.version;
+  $("version").textContent = manifestVersion ? `v${manifestVersion}` : "";
+
   const profile = await bg({ type: "GET_PROFILE" });
   serverUrl = profile?.serverUrl || "";
   username = profile?.username || "";

@@ -1,7 +1,9 @@
 services:
   peercast:
     build: .
-    image: peercast:2.0.0
+    # Image tag is runtime-interpolated — no version literal lives here. Pin a
+    # release with PEERCAST_TAG in your .env (default: latest).
+    image: peercast:${PEERCAST_TAG:-latest}
     container_name: peercast
     restart: unless-stopped
     ports:

@@ -2,7 +2,7 @@
 
 _Legend: ✅ done · 🚧 in progress · ⬜ planned_
 
-This roadmap reflects the **`webapp-nodejs` branch** (v2.0.0), the self-hosted
+This roadmap reflects the **`webapp-nodejs` branch** (current release), the self-hosted
 Node.js + React PWA rewrite.
 
 ---
@@ -44,7 +44,7 @@ Node.js + React PWA rewrite.
 
 ## Hardening & tech-debt (post-audit follow-ups)
 
-Tracked from the v2.0.0 production-readiness audit (`AUDIT_REPORT.md`). These are
+Tracked from the production-readiness audit (`AUDIT_REPORT.md`). These are
 deferred, non-blocking items — the shipped build is production-ready without
 them.
 
@@ -56,7 +56,7 @@ them.
 | **Redis-backed rate limiting & tickets**  | —   | Low      | Current in-memory `express-rate-limit` store and signaling-ticket map are correct for single-process deployments only. Swap to a shared store (e.g. Redis) before running multiple server instances behind a load balancer.                                                                                                         |
 | **Configurable cross-origin cookie mode** | M-4 | Done¹    | `COOKIE_SAME_SITE` env added (strict/lax/none). Revisit if a first-class split-origin deployment topology is officially supported/documented.                                                                                                                                                                                       |
 
-¹ Shipped in v2.0.0; listed here for traceability.
+¹ Shipped; listed here for traceability.
 
 ---
 

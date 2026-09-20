@@ -137,8 +137,10 @@ emailRouter.get(
     }
     usersRepo.setEmail(pending.username_lc, pending.new_email);
     // The recovery address changed: it must be re-verified out-of-band, so
-    // every existing session (refresh tokens) is revoked. The confirmation
-    // link itself needs no auth, so this doesn't break the click.
+    // every existing session is revoked — refresh tokens (both JWTs and the
+    // refresh cookie) and access JWTs via the token-version bump. The
+    // confirmation link itself needs no auth, so this doesn't break the click.
+    usersRepo.bumpTokenVersion(pending.username_lc);
     revokeAllRefreshTokens(pending.username_lc);
     res.redirect(`${config.appUrl}/verify-email-change?status=ok`);
   }),
@@ -184,7 +186,9 @@ emailRouter.post(
     if (!usernameLc)
       throw badRequest("invalid or expired reset link", "TOKEN_INVALID");
     usersRepo.setPassword(usernameLc, await hashPassword(newPassword));
-    // Revoke all existing sessions so the old password can't be used.
+    // Revoke all existing sessions: a stolen access JWT must not outlive a
+    // password reset, so bump the token version too (not just refresh tokens).
+    usersRepo.bumpTokenVersion(usernameLc);
     revokeAllRefreshTokens(usernameLc);
     res.json({ ok: true });
   }),

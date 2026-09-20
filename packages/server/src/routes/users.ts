@@ -125,6 +125,11 @@ usersRouter.put(
       req.auth!.usernameLc,
       await hashPassword(body.newPassword),
     );
+    // Invalidate every outstanding session: refresh tokens (both JWTs and the
+    // refresh cookie) AND access JWTs via the token-version bump. Without the
+    // bump a stolen access token stays valid for the 15-minute TTL after the
+    // owner recovers the account.
+    usersRepo.bumpTokenVersion(req.auth!.usernameLc);
     revokeAllRefreshTokens(req.auth!.usernameLc);
     res.json({ ok: true });
   }),
