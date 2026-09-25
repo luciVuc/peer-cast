@@ -57,6 +57,10 @@ export function BroadcastPage() {
       ? "screen"
       : "camera",
   );
+  // Preview: capture the stream before going live so the broadcaster can
+  // verify their camera/screen selection.
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [cameraFacingMode, setCameraFacingMode] = useState<
     "user" | "environment"
   >("user");
@@ -68,6 +72,9 @@ export function BroadcastPage() {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [chatText, setChatText] = useState("");
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [chatOpen, setChatOpen] = useState(true);
+  /** Muted peer IDs tracked locally to keep the UI in sync with the host. */
+  const [mutedPeers, setMutedPeers] = useState<Set<string>>(new Set());
   useEffect(() => {
     const el = chatScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -157,23 +164,18 @@ export function BroadcastPage() {
     }
   }
 
-  // ── Go live ─────────────────────────────────────────────────────────────
+  // ── Preview (capture stream without going live) ─────────────────────────
 
-  async function goLive() {
-    if (access === "code" && !accessCode.trim()) {
-      dispatch(addToast("Set an access code first.", "warning"));
-      return;
-    }
-    if (!cfg) {
-      dispatch(addToast("Server config not loaded yet.", "warning"));
-      return;
-    }
-    dispatch(broadcastStarting());
+  async function startPreview() {
+    if (isPreviewing) return;
+    setIsPreviewing(true);
     try {
       if (!navigator.mediaDevices) {
-        throw new Error(
-          "Camera and screen sharing are unavailable. Use HTTPS and allow browser permissions.",
+        dispatch(
+          addToast("Camera/screen access unavailable. Use HTTPS.", "error"),
         );
+        setIsPreviewing(false);
+        return;
       }
       const captureSource =
         !canCaptureScreen &&
@@ -201,6 +203,81 @@ export function BroadcastPage() {
               video: { frameRate: 30 },
               audio: true,
             });
+      setPreviewStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        void videoRef.current.play().catch(() => {});
+      }
+      // Stop preview automatically if the user closes the native picker.
+      stream.getTracks().forEach((t) => {
+        t.addEventListener("ended", () => cancelPreview());
+      });
+    } catch (err) {
+      setIsPreviewing(false);
+      dispatch(addToast(errorMessage(err, "Could not start preview"), "error"));
+    }
+  }
+
+  function cancelPreview() {
+    if (previewStream) {
+      previewStream.getTracks().forEach((t) => t.stop());
+    }
+    setPreviewStream(null);
+    setIsPreviewing(false);
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }
+
+  // ── Go live ─────────────────────────────────────────────────────────────
+
+  async function goLive() {
+    if (access === "code" && !accessCode.trim()) {
+      dispatch(addToast("Set an access code first.", "warning"));
+      return;
+    }
+    if (!cfg) {
+      dispatch(addToast("Server config not loaded yet.", "warning"));
+      return;
+    }
+    dispatch(broadcastStarting());
+    try {
+      if (!navigator.mediaDevices) {
+        throw new Error(
+          "Camera and screen sharing are unavailable. Use HTTPS and allow browser permissions.",
+        );
+      }
+      // Reuse preview stream if one is active (avoids asking for permissions twice).
+      const captureSource =
+        !canCaptureScreen &&
+        source !== "camera" &&
+        source !== "camera-only" &&
+        source !== "microphone"
+          ? "camera"
+          : source;
+      const stream = previewStream
+        ? previewStream
+        : captureSource === "camera" ||
+            captureSource === "camera-only" ||
+            captureSource === "microphone"
+          ? await navigator.mediaDevices.getUserMedia({
+              video:
+                captureSource === "microphone"
+                  ? false
+                  : {
+                      width: { ideal: 1280 },
+                      height: { ideal: 720 },
+                      facingMode: { ideal: cameraFacingMode },
+                    },
+              audio: captureSource !== "camera-only",
+            })
+          : await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: 30 },
+              audio: true,
+            });
+      // If we just captured a fresh stream, clear the preview state.
+      if (stream !== previewStream) {
+        setPreviewStream(null);
+        setIsPreviewing(false);
+      }
       broadcastService.setStream(stream);
 
       if (videoRef.current) {
@@ -392,6 +469,26 @@ export function BroadcastPage() {
     endingRef.current = false;
   }
 
+  function toggleMute(peerId: string) {
+    const host = broadcastService.host;
+    if (!host) return;
+    if (host.isMuted(peerId)) {
+      host.unmutePeer(peerId);
+      setMutedPeers((prev) => {
+        const s = new Set(prev);
+        s.delete(peerId);
+        return s;
+      });
+    } else {
+      host.mutePeer(peerId);
+      setMutedPeers((prev) => new Set([...prev, peerId]));
+    }
+  }
+
+  function kickViewer(peerId: string) {
+    broadcastService.host?.kickPeer(peerId);
+  }
+
   // NOTE: no unmount cleanup here — the broadcast intentionally survives
   // navigating away from this page.  Cleanup happens only in endLive() and
   // on sign-out (Layout.tsx clears the service + dispatches broadcastStopped).
@@ -401,6 +498,14 @@ export function BroadcastPage() {
     : me
       ? `${window.location.origin}/watch/${me.user.username}`
       : "";
+  const embedUrl = active?.viewerUsername
+    ? `${window.location.origin}/embed/${active.viewerUsername}`
+    : me
+      ? `${window.location.origin}/embed/${me.user.username}`
+      : "";
+  const embedCode = embedUrl
+    ? `<iframe src="${embedUrl}" width="640" height="360" allowfullscreen allow="autoplay; camera; microphone"></iframe>`
+    : "";
 
   const isLive = broadcastStatus === "live";
   const isStarting = broadcastStatus === "starting";
@@ -531,13 +636,32 @@ export function BroadcastPage() {
                   />
                 </div>
               )}
-              <button
-                className="btn-primary w-full"
-                onClick={goLive}
-                disabled={isStarting}
-              >
-                {isStarting ? "Starting…" : "Go live"}
-              </button>
+              <div className="flex gap-2">
+                {!isPreviewing ? (
+                  <button
+                    className="btn-ghost flex-1"
+                    onClick={() => void startPreview()}
+                    disabled={isStarting}
+                  >
+                    Preview
+                  </button>
+                ) : (
+                  <button
+                    className="btn-ghost flex-1"
+                    onClick={cancelPreview}
+                    disabled={isStarting}
+                  >
+                    Cancel preview
+                  </button>
+                )}
+                <button
+                  className="btn-primary flex-1"
+                  onClick={() => void goLive()}
+                  disabled={isStarting}
+                >
+                  {isStarting ? "Starting…" : "Go live"}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -569,6 +693,28 @@ export function BroadcastPage() {
                   </button>
                 </div>
               </div>
+              {embedCode && (
+                <div>
+                  <label className="label">Embed code</label>
+                  <div className="flex gap-2">
+                    <input
+                      className="input font-mono text-xs"
+                      readOnly
+                      value={embedCode}
+                      title="Copy this to embed the player on another site"
+                    />
+                    <button
+                      className="btn-ghost shrink-0"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(embedCode);
+                        dispatch(addToast("Embed code copied!", "success"));
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2.5">
                 <span className="text-sm text-slate-300">
                   {recording ? (
@@ -598,56 +744,101 @@ export function BroadcastPage() {
           )}
         </div>
 
-        <div className="card flex h-72 flex-col p-5">
-          <div className="mb-2 flex items-center justify-between">
+        <div className="card flex flex-col p-5">
+          <button
+            type="button"
+            className="mb-2 flex w-full items-center justify-between text-left"
+            onClick={() => setChatOpen((o) => !o)}
+            aria-expanded={chatOpen}
+          >
             <h3 className="font-semibold text-slate-200">Chat</h3>
-            {isLive && (
-              <span className="badge bg-ink-700 text-slate-300">P2P</span>
-            )}
-          </div>
-          <div
-            ref={chatScrollRef}
-            className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 text-sm"
-          >
-            {chat.length === 0 && (
-              <p className="text-slate-500">
-                {isLive
-                  ? "Viewers who connect can chat here."
-                  : "Chat opens when you go live."}
-              </p>
-            )}
-            {chat.map((m) => (
-              <div key={m.id} className="break-words">
-                <span className="font-semibold text-slate-200">{m.from}:</span>{" "}
-                <span className="text-slate-300">{m.text}</span>
+            <div className="flex items-center gap-2">
+              {isLive && (
+                <span className="badge bg-ink-700 text-slate-300">P2P</span>
+              )}
+              <span className="text-xs text-slate-500 sm:hidden">
+                {chatOpen ? "▾" : "▸"}
+              </span>
+            </div>
+          </button>
+          {chatOpen && (
+            <>
+              <div
+                ref={chatScrollRef}
+                className="min-h-0 h-56 max-h-[50vh] space-y-2 overflow-y-auto pr-1 text-sm"
+              >
+                {chat.length === 0 && (
+                  <p className="text-slate-500">
+                    {isLive
+                      ? "Viewers who connect can chat here."
+                      : "Chat opens when you go live."}
+                  </p>
+                )}
+                {chat.map((m) => (
+                  <div
+                    key={m.id}
+                    className="group flex items-start gap-1 break-words"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="font-semibold text-slate-200">
+                        {m.from}:
+                      </span>{" "}
+                      <span className="text-slate-300">{m.text}</span>
+                    </div>
+                    {isLive && m.senderPeerId && (
+                      <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                        <button
+                          title={
+                            mutedPeers.has(m.senderPeerId) ? "Unmute" : "Mute"
+                          }
+                          className="rounded px-1 py-0.5 text-xs text-slate-500 hover:bg-ink-700 hover:text-slate-300"
+                          onClick={() =>
+                            m.senderPeerId && toggleMute(m.senderPeerId)
+                          }
+                        >
+                          {mutedPeers.has(m.senderPeerId) ? "🔇" : "🔕"}
+                        </button>
+                        <button
+                          title="Kick viewer"
+                          className="rounded px-1 py-0.5 text-xs text-slate-500 hover:bg-ink-700 hover:text-red-400"
+                          onClick={() =>
+                            m.senderPeerId && kickViewer(m.senderPeerId)
+                          }
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <form
-            className="mt-3 flex gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!isLive) return;
-              broadcastService.host?.sendChat(chatText);
-              setChatText("");
-            }}
-          >
-            <input
-              className="input min-w-0 flex-1"
-              value={chatText}
-              maxLength={CHAT_MAX_LENGTH}
-              onChange={(e) => setChatText(e.target.value)}
-              placeholder={isLive ? "Message…" : "Go live to chat"}
-              disabled={!isLive}
-            />
-            <button
-              className="btn-primary shrink-0"
-              type="submit"
-              disabled={!isLive || !chatText.trim()}
-            >
-              Send
-            </button>
-          </form>
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!isLive) return;
+                  broadcastService.host?.sendChat(chatText);
+                  setChatText("");
+                }}
+              >
+                <input
+                  className="input min-w-0 flex-1"
+                  value={chatText}
+                  maxLength={CHAT_MAX_LENGTH}
+                  onChange={(e) => setChatText(e.target.value)}
+                  placeholder={isLive ? "Message…" : "Go live to chat"}
+                  disabled={!isLive}
+                />
+                <button
+                  className="btn-primary shrink-0"
+                  type="submit"
+                  disabled={!isLive || !chatText.trim()}
+                >
+                  Send
+                </button>
+              </form>
+            </>
+          )}
         </div>
 
         <div className="card p-5 text-sm text-slate-400">

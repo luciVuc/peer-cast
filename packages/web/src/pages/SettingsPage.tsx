@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AccessPolicy } from "@peer-cast/shared";
-import { useNavigate } from "react-router-dom";
+import { useBlocker, useNavigate } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
 import { Spinner } from "../components/Spinner";
 import { Modal } from "../components/Modal";
@@ -70,6 +70,23 @@ export function SettingsPage() {
   const [pw, setPw] = useState({ current: "", next: "" });
   const [newEmail, setNewEmail] = useState("");
 
+  // Track unsaved changes across any section.
+  const [dirty, setDirty] = useState(false);
+
+  // Block in-app navigation when there are unsaved changes.
+  const blocker = useBlocker(dirty);
+
+  // Also block page refresh / close.
+  useEffect(() => {
+    function handler(e: BeforeUnloadEvent) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   useEffect(() => {
     if (me) {
       setDisplayName(me.user.displayName);
@@ -85,7 +102,10 @@ export function SettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => setAvatarDataUrl(reader.result as string);
+    reader.onload = () => {
+      setAvatarDataUrl(reader.result as string);
+      setDirty(true);
+    };
     reader.readAsDataURL(file);
   }
 
@@ -98,6 +118,7 @@ export function SettingsPage() {
       }).unwrap();
       dispatch(userUpdated(res.user));
       dispatch(addToast("Profile saved.", "success"));
+      setDirty(false);
     } catch (err) {
       dispatch(addToast(errorMessage(err, "Save failed"), "error"));
     }
@@ -107,6 +128,7 @@ export function SettingsPage() {
     try {
       await updateSettings(settings).unwrap();
       dispatch(addToast("Settings saved.", "success"));
+      setDirty(false);
     } catch (err) {
       dispatch(addToast(errorMessage(err, "Could not save settings"), "error"));
     }
@@ -120,6 +142,7 @@ export function SettingsPage() {
       }).unwrap();
       setPw({ current: "", next: "" });
       dispatch(addToast("Password changed.", "success"));
+      setDirty(false);
     } catch (err) {
       dispatch(
         addToast(errorMessage(err, "Could not change password"), "error"),
@@ -137,6 +160,7 @@ export function SettingsPage() {
           "success",
         ),
       );
+      setDirty(false);
     } catch (err) {
       dispatch(addToast(errorMessage(err, "Could not change email"), "error"));
     }
@@ -199,6 +223,28 @@ export function SettingsPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
 
+      {/* Unsaved-changes blocker modal */}
+      {blocker.state === "blocked" && (
+        <Modal
+          title="Unsaved changes"
+          onClose={() => blocker.reset()}
+          actions={
+            <>
+              <button className="btn-ghost" onClick={() => blocker.reset()}>
+                Stay
+              </button>
+              <button className="btn-danger" onClick={() => blocker.proceed()}>
+                Leave without saving
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-400">
+            You have unsaved changes. If you leave now, they will be lost.
+          </p>
+        </Modal>
+      )}
+
       <Section title="Profile">
         <div className="space-y-4">
           <div className="flex items-center gap-4">
@@ -235,7 +281,10 @@ export function SettingsPage() {
             <input
               className="input"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={(e) => {
+                setDisplayName(e.target.value);
+                setDirty(true);
+              }}
             />
           </div>
           <div>
@@ -244,7 +293,10 @@ export function SettingsPage() {
               className="input"
               rows={3}
               value={about}
-              onChange={(e) => setAbout(e.target.value)}
+              onChange={(e) => {
+                setAbout(e.target.value);
+                setDirty(true);
+              }}
             />
           </div>
           <button
@@ -264,9 +316,10 @@ export function SettingsPage() {
             <input
               className="input"
               value={settings.defaultTitle}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, defaultTitle: e.target.value }))
-              }
+              onChange={(e) => {
+                setSettings((s) => ({ ...s, defaultTitle: e.target.value }));
+                setDirty(true);
+              }}
             />
           </div>
           <div>
@@ -274,12 +327,13 @@ export function SettingsPage() {
             <select
               className="input"
               value={settings.defaultAccess}
-              onChange={(e) =>
+              onChange={(e) => {
                 setSettings((s) => ({
                   ...s,
                   defaultAccess: e.target.value as AccessPolicy,
-                }))
-              }
+                }));
+                setDirty(true);
+              }}
             >
               <option value="public">Public</option>
               <option value="authenticated">Members</option>
@@ -290,9 +344,10 @@ export function SettingsPage() {
             <input
               type="checkbox"
               checked={settings.discoverable}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, discoverable: e.target.checked }))
-              }
+              onChange={(e) => {
+                setSettings((s) => ({ ...s, discoverable: e.target.checked }));
+                setDirty(true);
+              }}
             />
             Appear in the public directory and live listings
           </label>
@@ -318,7 +373,10 @@ export function SettingsPage() {
               className="input"
               type="email"
               value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
+              onChange={(e) => {
+                setNewEmail(e.target.value);
+                setDirty(true);
+              }}
               placeholder="you@example.com"
               autoComplete="email"
             />
@@ -395,7 +453,10 @@ export function SettingsPage() {
               className="input"
               type="password"
               value={pw.next}
-              onChange={(e) => setPw((p) => ({ ...p, next: e.target.value }))}
+              onChange={(e) => {
+                setPw((p) => ({ ...p, next: e.target.value }));
+                setDirty(true);
+              }}
               autoComplete="new-password"
             />
           </div>

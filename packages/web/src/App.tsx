@@ -16,12 +16,17 @@ import { VerifyEmailChangePage } from "./pages/VerifyEmailChangePage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { UserProfilePage } from "./pages/UserProfilePage";
+import { EmbedPage } from "./pages/EmbedPage";
 
 export default function App() {
   return (
     <>
       <Toasts />
       <Routes>
+        {/* Embed route: no Layout, no auth wall, renders full-height in iframes */}
+        <Route path="embed/:username" element={<EmbedPage />} />
+
         <Route element={<Layout />}>
           <Route index element={<LandingPage />} />
           <Route path="login" element={<LoginPage />} />
@@ -34,6 +39,7 @@ export default function App() {
           <Route path="forgot-password" element={<ForgotPasswordPage />} />
           <Route path="reset-password" element={<ResetPasswordPage />} />
           <Route path="watch/:username" element={<ViewerPage />} />
+          <Route path="user/:username" element={<UserProfilePage />} />
 
           <Route element={<ProtectedRoute />}>
             <Route path="dashboard" element={<DashboardPage />} />

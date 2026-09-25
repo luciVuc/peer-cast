@@ -66,6 +66,11 @@ function statsOf(r: BroadcastRow): BroadcastStats | undefined {
   };
 }
 
+/** Exported so routes can attach stats without duplicating the mapping logic. */
+export function rowStatsOf(r: BroadcastRow): BroadcastStats | undefined {
+  return statsOf(r);
+}
+
 function withUser(r: BroadcastRow): BroadcastWithUser {
   const owner = usersRepo.getPublic(r.username_lc)!;
   return { ...toBroadcast(r), owner, stats: statsOf(r) };
@@ -253,9 +258,10 @@ export const broadcastsRepo = {
         `SELECT b.* FROM broadcasts b
          JOIN users u ON u.username_lc = b.username_lc
          WHERE b.status = 'live' AND u.discoverable = 1 AND u.banned = 0
+           AND COALESCE(b.stat_at, b.started_at) > ?
          ORDER BY b.started_at DESC LIMIT ?`,
       )
-      .all(limit) as BroadcastRow[];
+      .all(Date.now() - config.staleLiveMs, limit) as BroadcastRow[];
     return rows.map(withUser);
   },
 
@@ -266,10 +272,17 @@ export const broadcastsRepo = {
         `SELECT b.* FROM broadcasts b
          JOIN users u ON u.username_lc = b.username_lc
          WHERE b.status = 'live' AND u.discoverable = 1 AND u.banned = 0
+           AND COALESCE(b.stat_at, b.started_at) > ?
            AND (b.title LIKE ? OR u.username LIKE ? OR u.display_name LIKE ?)
          ORDER BY b.started_at DESC LIMIT ?`,
       )
-      .all(like, like, like, limit) as BroadcastRow[];
+      .all(
+        Date.now() - config.staleLiveMs,
+        like,
+        like,
+        like,
+        limit,
+      ) as BroadcastRow[];
     return rows.map(withUser);
   },
 
@@ -328,5 +341,30 @@ export const broadcastsRepo = {
     const r = this.getRaw(id);
     if (!r || r.access !== "code" || !r.access_code) return false;
     return hashMatches(r.access_code, code);
+  },
+
+  /**
+   * Public broadcast history for a user's profile page.
+   * Only returns ended public broadcasts, cursor-paginated.
+   */
+  publicHistoryForUser(
+    usernameLc: string,
+    cursor = 0,
+    limit = 20,
+  ): { rows: BroadcastWithUser[]; nextCursor: number | null } {
+    const rows = db
+      .prepare(
+        `SELECT * FROM broadcasts
+         WHERE username_lc = ? AND status = 'ended' AND access = 'public'
+           AND (? = 0 OR started_at < ?)
+         ORDER BY started_at DESC LIMIT ?`,
+      )
+      .all(usernameLc, cursor, cursor, limit + 1) as BroadcastRow[];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    return {
+      rows: rows.map(withUser),
+      nextCursor: hasMore ? (rows[rows.length - 1]?.started_at ?? null) : null,
+    };
   },
 };

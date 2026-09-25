@@ -68,6 +68,8 @@ export function Toasts() {
   if (!toasts.length) return null;
   return (
     <div
+      role="region"
+      aria-label="Notifications"
       aria-live="polite"
       aria-atomic="false"
       className="fixed bottom-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2"

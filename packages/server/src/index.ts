@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { purgeExpired } from "./lib/auth.js";
 import { shutdownRedis } from "./lib/redis.js";
 import { broadcastsRepo } from "./repos/broadcasts.js";
+import { migrateAvatars } from "./db/index.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -43,4 +44,6 @@ httpServer.listen(config.port, config.host, () => {
   console.log(
     `[server] signaling at ${config.signal.secure ? "wss" : "ws"}://${config.signal.host}:${config.signal.port}${config.signal.path} (key: ${config.signal.key})`,
   );
+  // Run one-time data migrations after the server is ready.
+  migrateAvatars();
 });

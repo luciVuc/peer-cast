@@ -11,6 +11,8 @@ import { RedisStore, type RedisReply } from "rate-limit-redis";
 import { config } from "./config.js";
 import { getRedis } from "./lib/redis.js";
 import { errorHandler } from "./middleware/error.js";
+import { csrfGuard } from "./middleware/csrf.js";
+import { avatarDir } from "./lib/avatar.js";
 import { authRouter } from "./routes/auth.js";
 import { broadcastsRouter } from "./routes/broadcasts.js";
 import { configRouter } from "./routes/config.js";
@@ -111,6 +113,26 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
   app.use(cookieParser());
   app.use(compression());
   app.use(express.json({ limit: "1mb" }));
+  // CSRF guard: reject cross-origin state-changing requests to cookie-dependent
+  // auth endpoints when SameSite is not strict.
+  app.use("/api/auth", csrfGuard);
+
+  // Allow the /embed/* routes to be framed by any origin.
+  // All other routes keep frame-ancestors: 'none' from Helmet above.
+  // We override the CSP and X-Frame-Options headers on embed routes only.
+  app.use("/embed", (_req, res, next) => {
+    res.removeHeader("X-Frame-Options");
+    res.setHeader(
+      "Content-Security-Policy",
+      res.getHeader("Content-Security-Policy")
+        ? String(res.getHeader("Content-Security-Policy")).replace(
+            /frame-ancestors [^;]+/,
+            "frame-ancestors *",
+          )
+        : "frame-ancestors *",
+    );
+    next();
+  });
 
   // ── PeerJS signaling (only when an http server is available) ──────────────
   if (httpServer) {
@@ -225,6 +247,28 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     // after network drops; exponential backoff in ViewerPage prevents storms,
     // but give enough headroom so a normal session never hits the limit.
     app.use("/api/sessions", mkLim("session-ip", 15 * 60_000, 120));
+    // Code-gated session resolves: 5 wrong codes / 15 min per (IP + username).
+    // Only counts failed (non-2xx) responses so correct codes don't burn the budget.
+    app.use(
+      "/api/sessions",
+      mkLim(
+        "code-attempt",
+        15 * 60_000,
+        5,
+        (req) => {
+          const code = String(
+            (req.query as Record<string, string>)?.code ?? "",
+          );
+          if (!code) return `code:noop:${ipKeyGenerator(req.ip ?? "unknown")}`;
+          const username =
+            (req.params as Record<string, string>)?.username ??
+            req.path.split("/")[1] ??
+            "";
+          return `code:${username.toLowerCase()}:${ipKeyGenerator(req.ip ?? "unknown")}`;
+        },
+        true, // only count failed responses
+      ),
+    );
     // Reports: 10/h per IP.
     app.use("/api/reports", mkLim("report-ip", 60 * 60_000, 10));
     // Follow writes: 60/15 min per IP (prevents follow-graph spam).
@@ -242,6 +286,18 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
   }
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  // Serve avatar images with long-lived caching (URL ?v= param busts the cache).
+  app.use(
+    "/api/avatars",
+    express.static(avatarDir(), {
+      maxAge: "7d",
+      immutable: true,
+      index: false,
+      setHeaders: (res) => {
+        res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+      },
+    }),
+  );
   app.use("/api/config", configRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/auth", emailRouter);

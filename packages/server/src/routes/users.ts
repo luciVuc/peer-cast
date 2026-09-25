@@ -11,6 +11,7 @@ import {
   verifyPassword,
   revokeAllRefreshTokens,
 } from "../lib/auth.js";
+import { saveAvatar, deleteAvatar } from "../lib/avatar.js";
 import { badRequest, notFound, unauthorized } from "../lib/errors.js";
 import { asyncHandler } from "../middleware/error.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
@@ -70,22 +71,28 @@ usersRouter.put(
   requireAuth,
   asyncHandler(async (req, res) => {
     const body = profileSchema.parse(req.body);
-    if (
-      typeof body.avatarDataUrl === "string" &&
-      (!RASTER_DATA_URL_RE.test(body.avatarDataUrl) ||
-        body.avatarDataUrl.length > MAX_AVATAR_BYTES)
-    ) {
-      throw badRequest(
-        "avatar must be a raster image (PNG/JPEG/WebP/GIF) as a data URL ≤ 200 KB",
-      );
+    const patch: Parameters<typeof usersRepo.updateProfile>[1] = {};
+
+    // Avatar: save file to disk (not inline in DB) or delete.
+    if (typeof body.avatarDataUrl === "string") {
+      if (
+        !RASTER_DATA_URL_RE.test(body.avatarDataUrl) ||
+        body.avatarDataUrl.length > MAX_AVATAR_BYTES
+      ) {
+        throw badRequest(
+          "avatar must be a raster image (PNG/JPEG/WebP/GIF) as a data URL ≤ 200 KB",
+        );
+      }
+      patch.avatarUrl = saveAvatar(req.auth!.usernameLc, body.avatarDataUrl);
+    } else if (body.avatarDataUrl === null) {
+      deleteAvatar(req.auth!.usernameLc);
+      patch.avatarUrl = null;
     }
-    const user = usersRepo.updateProfile(req.auth!.usernameLc, {
-      displayName: body.displayName,
-      about:
-        body.about === undefined ? undefined : (body.about?.trim() ?? null),
-      avatarUrl:
-        body.avatarDataUrl === undefined ? undefined : body.avatarDataUrl,
-    });
+
+    if (body.displayName !== undefined) patch.displayName = body.displayName;
+    if (body.about !== undefined) patch.about = body.about?.trim() ?? null;
+
+    const user = usersRepo.updateProfile(req.auth!.usernameLc, patch);
     res.json({ user });
   }),
 );
@@ -176,6 +183,25 @@ usersRouter.get(
       live: live ? { ...live, peerId: null } : null,
     };
     res.json(out);
+  }),
+);
+
+// ─── Public broadcast history (for user profile page) ──────────────────────
+usersRouter.get(
+  "/:username/broadcasts",
+  asyncHandler(async (req, res) => {
+    const usernameLc = req.params.username.toLowerCase();
+    const user = usersRepo.getRaw(usernameLc);
+    if (!user || !user.discoverable || user.banned)
+      throw notFound("user not found");
+    const cursor = Number(req.query.cursor) || 0;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const { rows, nextCursor } = broadcastsRepo.publicHistoryForUser(
+      usernameLc,
+      cursor,
+      limit,
+    );
+    res.json({ broadcasts: rows, nextCursor, limit });
   }),
 );
 

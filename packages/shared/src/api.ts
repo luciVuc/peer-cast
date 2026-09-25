@@ -130,6 +130,9 @@ export interface ResolveResponse {
   ticket: string | null;
   /** True when the broadcast requires an access code the caller has not supplied. */
   needsCode?: boolean;
+  /** Live stats snapshot
+   * (included for non-public broadcasts that won't appear in the public live feed). */
+  stats?: BroadcastStats;
 }
 
 export interface VerifyTicketRequest {

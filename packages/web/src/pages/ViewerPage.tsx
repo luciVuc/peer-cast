@@ -44,6 +44,7 @@ export function ViewerPage() {
   const [errMsg, setErrMsg] = useState("");
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [chatText, setChatText] = useState("");
+  const [chatOpen, setChatOpen] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<ViewerHandle | null>(null);
@@ -56,6 +57,8 @@ export function ViewerPage() {
   const disposedRef = useRef(false);
   /** Guards against duplicate initial resolves (React 18 StrictMode double-invoke). */
   const startedRef = useRef(false);
+  /** Prevents concurrent resolve() calls (e.g. Retry click + reconnect timer). */
+  const resolvingRef = useRef(false);
 
   /** Mint a signaling ticket for authenticated viewers (avoids JWT in URL). */
   async function mintSigToken(): Promise<string | null> {
@@ -131,36 +134,41 @@ export function ViewerPage() {
 
   // Resolve the session (optionally with an access code), then connect.
   async function resolve(withCode?: string) {
-    if (disposedRef.current) return;
-    setPhase("resolving");
-    const res = await trigger({ username, code: withCode });
-    if (disposedRef.current) return;
-    if (res.error) {
-      const status = (res.error as { status?: number }).status;
-      if (status === 404) setPhase("offline");
-      else if (status === 401) setPhase(authed ? "need-code" : "need-auth");
-      else if (status === 403) {
+    if (disposedRef.current || resolvingRef.current) return;
+    resolvingRef.current = true;
+    try {
+      setPhase("resolving");
+      const res = await trigger({ username, code: withCode });
+      if (disposedRef.current) return;
+      if (res.error) {
+        const status = (res.error as { status?: number }).status;
+        if (status === 404) setPhase("offline");
+        else if (status === 401) setPhase(authed ? "need-code" : "need-auth");
+        else if (status === 403) {
+          setPhase("need-code");
+          setErrMsg("Incorrect access code.");
+        } else setPhase("error");
+        return;
+      }
+      const data = res.data!;
+      if (data.needsCode) {
         setPhase("need-code");
-        setErrMsg("Incorrect access code.");
-      } else setPhase("error");
-      return;
+        return;
+      }
+      if (!data.peerId) {
+        setPhase(authed ? "need-code" : "need-auth");
+        return;
+      }
+      // Remember the code that unlocked this session so automatic reconnects
+      // (which re-resolve) can re-send it instead of bouncing back to login.
+      if (withCode) lastCodeRef.current = withCode;
+      // Mint the signaling ticket, then connect imperatively.
+      const sigToken = await mintSigToken();
+      if (disposedRef.current) return;
+      connect(data.peerId, data.ticket, sigToken);
+    } finally {
+      resolvingRef.current = false;
     }
-    const data = res.data!;
-    if (data.needsCode) {
-      setPhase("need-code");
-      return;
-    }
-    if (!data.peerId) {
-      setPhase(authed ? "need-code" : "need-auth");
-      return;
-    }
-    // Remember the code that unlocked this session so automatic reconnects
-    // (which re-resolve) can re-send it instead of bouncing back to login.
-    if (withCode) lastCodeRef.current = withCode;
-    // Mint the signaling ticket, then connect imperatively.
-    const sigToken = await mintSigToken();
-    if (disposedRef.current) return;
-    connect(data.peerId, data.ticket, sigToken);
   }
 
   // Initial resolve + single cleanup on unmount. Empty-ish deps so this runs
@@ -176,6 +184,7 @@ export function ViewerPage() {
       // Real unmount (or username/cfg change): stop everything.
       disposedRef.current = true;
       startedRef.current = false;
+      resolvingRef.current = false;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       teardown();
     };
@@ -193,12 +202,14 @@ export function ViewerPage() {
   const broadcastId = result.data?.broadcast.id;
   // Live stats overlay: follow the global live feed (no extra resolve), so the
   // viewer count + bitrate stay current while watching without re-resolving.
+  // For non-public/non-discoverable broadcasts the live feed won't include
+  // the broadcast, so fall back to stats from the resolve response.
   const { data: liveFeed } = useListLiveQuery(undefined, {
     pollingInterval: 15000,
   });
-  const liveStats = liveFeed?.broadcasts.find(
-    (b) => b.owner.username === username,
-  )?.stats;
+  const liveStats =
+    liveFeed?.broadcasts.find((b) => b.owner.username === username)?.stats ??
+    result.data?.stats;
   const [createReport] = useCreateReportMutation();
   const [reported, setReported] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -433,64 +444,80 @@ export function ViewerPage() {
         </Modal>
       )}
 
-      <div className="card mt-4 flex h-72 flex-col p-4">
-        <div className="mb-2 flex items-center justify-between">
+      <div className="card mt-4 flex flex-col p-4">
+        <button
+          type="button"
+          className="mb-2 flex w-full items-center justify-between text-left"
+          onClick={() => setChatOpen((o) => !o)}
+          aria-expanded={chatOpen}
+        >
           <h2 className="text-lg font-bold">Chat</h2>
-          {phase === "playing" && (
-            <span className="badge bg-ink-700 text-slate-300">P2P</span>
-          )}
-        </div>
-        <div
-          ref={chatScrollRef}
-          className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 text-sm"
-        >
-          {chat.length === 0 && (
-            <p className="text-slate-500">
-              {phase === "playing"
-                ? "No messages yet. Say hello!"
-                : "Messages appear here once you're connected."}
-            </p>
-          )}
-          {chat.map((m) => (
-            <div key={m.id} className="break-words">
-              <span className="font-semibold text-slate-200">{m.from}:</span>{" "}
-              <span className="text-slate-300">{m.text}</span>
+          <div className="flex items-center gap-2">
+            {phase === "playing" && (
+              <span className="badge bg-ink-700 text-slate-300">P2P</span>
+            )}
+            <span className="text-xs text-slate-500 sm:hidden">
+              {chatOpen ? "▾" : "▸"}
+            </span>
+          </div>
+        </button>
+        {chatOpen && (
+          <>
+            <div
+              ref={chatScrollRef}
+              className="min-h-0 h-56 max-h-[50vh] space-y-2 overflow-y-auto pr-1 text-sm"
+            >
+              {chat.length === 0 && (
+                <p className="text-slate-500">
+                  {phase === "playing"
+                    ? "No messages yet. Say hello!"
+                    : "Messages appear here once you're connected."}
+                </p>
+              )}
+              {chat.map((m) => (
+                <div key={m.id} className="break-words">
+                  <span className="font-semibold text-slate-200">
+                    {m.from}:
+                  </span>{" "}
+                  <span className="text-slate-300">{m.text}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <form
-          className="mt-3 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (phase !== "playing") return;
-            handleRef.current?.sendChat(chatText);
-            // The host relays to *other* viewers only — echo locally so the
-            // sender sees their own line too.
-            setChat((prev) => [
-              ...prev.slice(-199),
-              packChat(viewerName || "Viewer", chatText.trim()),
-            ]);
-            setChatText("");
-          }}
-        >
-          <input
-            className="input min-w-0 flex-1"
-            value={chatText}
-            maxLength={CHAT_MAX_LENGTH}
-            onChange={(e) => setChatText(e.target.value)}
-            placeholder={
-              phase === "playing" ? "Message…" : "Connect to send a message"
-            }
-            disabled={phase !== "playing"}
-          />
-          <button
-            className="btn-primary shrink-0"
-            type="submit"
-            disabled={phase !== "playing" || !chatText.trim()}
-          >
-            Send
-          </button>
-        </form>
+            <form
+              className="mt-3 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (phase !== "playing") return;
+                handleRef.current?.sendChat(chatText);
+                // The host relays to *other* viewers only — echo locally so the
+                // sender sees their own line too.
+                setChat((prev) => [
+                  ...prev.slice(-199),
+                  packChat(viewerName || "Viewer", chatText.trim()),
+                ]);
+                setChatText("");
+              }}
+            >
+              <input
+                className="input min-w-0 flex-1"
+                value={chatText}
+                maxLength={CHAT_MAX_LENGTH}
+                onChange={(e) => setChatText(e.target.value)}
+                placeholder={
+                  phase === "playing" ? "Message…" : "Connect to send a message"
+                }
+                disabled={phase !== "playing"}
+              />
+              <button
+                className="btn-primary shrink-0"
+                type="submit"
+                disabled={phase !== "playing" || !chatText.trim()}
+              >
+                Send
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );

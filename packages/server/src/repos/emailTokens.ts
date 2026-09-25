@@ -25,7 +25,8 @@ export const emailTokensRepo = {
 
   /**
    * Consume a verification token. Returns the username_lc on success, null on
-   * failure (invalid, expired). Also deletes all tokens for that user.
+   * failure (invalid, expired). Always deletes the token row (matches
+   * consumeReset pattern — single-use, expired tokens cleaned up immediately).
    */
   consumeVerification(token: string): string | null {
     const row = db
@@ -33,10 +34,14 @@ export const emailTokensRepo = {
         `SELECT username_lc, expires_at FROM email_verifications WHERE token = ?`,
       )
       .get(token) as { username_lc: string; expires_at: number } | undefined;
+    // Always delete the token (whether valid, expired, or not found) so
+    // expired tokens don't linger until the next periodic purge.
+    if (row) {
+      db.prepare(`DELETE FROM email_verifications WHERE username_lc = ?`).run(
+        row.username_lc,
+      );
+    }
     if (!row || row.expires_at < Date.now()) return null;
-    db.prepare(`DELETE FROM email_verifications WHERE username_lc = ?`).run(
-      row.username_lc,
-    );
     return row.username_lc;
   },
 

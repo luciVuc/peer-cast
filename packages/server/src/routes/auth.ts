@@ -180,11 +180,22 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const body = loginSchema.parse(req.body);
     const user = usersRepo.getRaw(body.username.toLowerCase());
+    // Check lockout before the (expensive) bcrypt compare.
+    if (user && usersRepo.isLocked(user.username_lc)) {
+      throw forbidden(
+        "account temporarily locked due to too many failed login attempts — try again in 30 minutes",
+        "ACCOUNT_LOCKED",
+      );
+    }
     // Constant-ish behaviour: still hash-compare against a dummy if no user.
     const ok =
       !!user && (await verifyPassword(body.password, user.password_hash));
-    if (!user || !ok)
+    if (!user || !ok) {
+      // Record the failure before throwing so we don't reveal whether the
+      // user exists by the presence/absence of the counter update.
+      if (user) usersRepo.recordFailedLogin(user.username_lc);
       throw unauthorized("invalid credentials", "BAD_CREDENTIALS");
+    }
     if (user.banned) throw forbidden("account suspended", "BANNED");
     if (config.requireEmailVerification && !user.email_verified) {
       throw forbidden(
@@ -192,6 +203,8 @@ authRouter.post(
         "EMAIL_UNVERIFIED",
       );
     }
+    // Successful login — clear any lockout state.
+    usersRepo.resetFailedLogins(user.username_lc);
     res.json(authResponse(res, user.username_lc, user.username));
   }),
 );

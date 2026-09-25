@@ -24,6 +24,9 @@ interface UserRow {
   banned_reason: string | null;
   banned_at: number | null;
   token_version: number;
+  failed_logins: number;
+  failed_login_window: number | null;
+  locked_until: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -259,12 +262,54 @@ export const usersRepo = {
     ).run(Date.now(), usernameLc);
   },
 
-  /**
-   * Permanently delete a user account and all owned data.
+  // ─── Login lockout ───────────────────────────────────────────────────
+
+  /** After 20 failed attempts within 30 min (any IPs), lock the account for 30 min. */
+  recordFailedLogin(usernameLc: string): void {
+    const WINDOW_MS = 30 * 60_000;
+    const LOCK_AFTER = 20;
+    const LOCK_DURATION_MS = 30 * 60_000;
+    const now = Date.now();
+    const r = this.getRaw(usernameLc);
+    if (!r) return;
+    // Reset counter if the rolling window has expired.
+    const windowStart = r.failed_login_window ?? 0;
+    const count =
+      now - windowStart < WINDOW_MS ? (r.failed_logins ?? 0) + 1 : 1;
+    const newWindow = count === 1 ? now : windowStart;
+    const lockedUntil =
+      count >= LOCK_AFTER ? now + LOCK_DURATION_MS : (r.locked_until ?? null);
+    db.prepare(
+      `UPDATE users SET failed_logins = ?, failed_login_window = ?,
+         locked_until = ?, updated_at = ?
+       WHERE username_lc = ?`,
+    ).run(count, newWindow, lockedUntil, now, usernameLc);
+  },
+
+  resetFailedLogins(usernameLc: string): void {
+    db.prepare(
+      `UPDATE users SET failed_logins = 0, failed_login_window = NULL,
+         locked_until = NULL, updated_at = ?
+       WHERE username_lc = ?`,
+    ).run(Date.now(), usernameLc);
+  },
+
+  isLocked(usernameLc: string): boolean {
+    const r = this.getRaw(usernameLc);
+    if (!r || !r.locked_until) return false;
+    return r.locked_until > Date.now();
+  },
+
+  /** Permanently delete a user account and all owned data.
    * SQLite FK cascades handle broadcasts and refresh_tokens automatically.
    * We explicitly purge tickets and email tokens that reference the user.
    */
   delete(usernameLc: string): void {
+    // Best-effort: try to clean up avatar files on disk.
+    // Use dynamic import to avoid circular deps. Non-fatal if it fails.
+    void import("../lib/avatar.js")
+      .then(({ deleteAvatar }) => deleteAvatar(usernameLc))
+      .catch(() => {});
     db.transaction(() => {
       db.prepare(`DELETE FROM tickets       WHERE username_lc = ?`).run(
         usernameLc,

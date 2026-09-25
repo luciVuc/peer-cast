@@ -1,8 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { db } from "../db/index.js";
 import { config } from "../config.js";
+import { badRequest } from "../lib/errors.js";
+
+/** Recording IDs are 18 lower-case hex characters (randomBytes(9).toString("hex")). */
+const RECORDING_ID_RE = /^[0-9a-f]{18}$/;
+
+/**
+ * Validate a recording id coming from a URL parameter.
+ * Throws 400 immediately if the value doesn't match so every downstream
+ * file operation is safe against path-traversal attempts.
+ */
+export function assertValidId(id: string): void {
+  if (!RECORDING_ID_RE.test(id)) {
+    throw badRequest("invalid recording id", "BAD_ID");
+  }
+}
 
 /** Row shape for a recorded replay (WebM stored on disk under config.recordings.dir). */
 export interface RecordingRow {
@@ -52,12 +67,20 @@ export function recordingsDir(): string {
 
 /** In-progress upload target (file) for a recording. */
 export function partFileOf(id: string): string {
-  return join(config.recordings.dir, `${id}.webm.part`);
+  const base = resolve(config.recordings.dir);
+  const p = resolve(base, `${id}.webm.part`);
+  if (!p.startsWith(base + "/") && p !== base)
+    throw new Error("path escape detected");
+  return p;
 }
 
 /** Final replay file (created on finalize). */
 export function replayFileOf(id: string): string {
-  return join(config.recordings.dir, `${id}.webm`);
+  const base = resolve(config.recordings.dir);
+  const p = resolve(base, `${id}.webm`);
+  if (!p.startsWith(base + "/") && p !== base)
+    throw new Error("path escape detected");
+  return p;
 }
 
 export function createRecording(params: {
@@ -165,6 +188,7 @@ export function deleteAllForUser(usernameLc: string): void {
 }
 
 export default {
+  assertValidId,
   recordingsDir,
   partFileOf,
   replayFileOf,

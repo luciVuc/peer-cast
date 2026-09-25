@@ -15,6 +15,7 @@ import { reportsRepo } from "../repos/reports.js";
 import { invitesRepo } from "../repos/invites.js";
 import { metricsRepo } from "../repos/metrics.js";
 import recordingsRepo from "../repos/recordings.js";
+import { auditRepo } from "../repos/audit.js";
 
 export const adminRouter = Router();
 
@@ -63,6 +64,7 @@ adminRouter.post(
     // it drops out of discovery and stops issuing tickets.
     revokeAllRefreshTokens(lc);
     const ended = broadcastsRepo.endAllForUser(lc);
+    auditRepo.log(req.auth!.usernameLc, "ban", lc, reason?.trim() || undefined);
     res.json({
       ok: true,
       user: usersRepo.getAdmin(lc, false),
@@ -77,6 +79,7 @@ adminRouter.post(
     const lc = req.params.username.toLowerCase();
     if (!usersRepo.getRaw(lc)) throw notFound("user not found");
     usersRepo.unban(lc);
+    auditRepo.log(req.auth!.usernameLc, "unban", lc);
     res.json({ ok: true, user: usersRepo.getAdmin(lc, isLive(lc)) });
   }),
 );
@@ -91,6 +94,7 @@ adminRouter.delete(
     broadcastsRepo.endAllForUser(lc);
     revokeAllRefreshTokens(lc);
     recordingsRepo.deleteAllForUser(lc);
+    auditRepo.log(req.auth!.usernameLc, "user_delete", lc);
     usersRepo.delete(lc);
     res.json({ ok: true });
   }),
@@ -108,6 +112,7 @@ adminRouter.put(
     }
     const { role } = roleSchema.parse(req.body);
     usersRepo.setRole(lc, role);
+    auditRepo.log(req.auth!.usernameLc, "role_change", lc, role);
     res.json({ ok: true, user: usersRepo.getAdmin(lc, isLive(lc)) });
   }),
 );
@@ -119,6 +124,7 @@ adminRouter.post(
   asyncHandler(async (req, res) => {
     const ended = broadcastsRepo.adminEnd(req.params.id);
     if (!ended) throw notFound("broadcast not found");
+    auditRepo.log(req.auth!.usernameLc, "takedown", req.params.id, ended.title);
     res.json({ ok: true, broadcast: ended });
   }),
 );
@@ -166,6 +172,12 @@ adminRouter.post(
       req.auth!.usernameLc,
     );
     if (!report) throw notFound("report not found");
+    auditRepo.log(
+      req.auth!.usernameLc,
+      "report_resolve",
+      req.params.id,
+      `${status} — ${report.targetUsername}`,
+    );
     res.json({ ok: true, report });
   }),
 );
@@ -202,6 +214,7 @@ adminRouter.post(
         : null,
       createdBy: req.auth!.usernameLc,
     });
+    auditRepo.log(req.auth!.usernameLc, "invite_create", invite.code);
     res.status(201).json({ ok: true, invite });
   }),
 );
@@ -211,6 +224,19 @@ adminRouter.post(
   asyncHandler(async (req, res) => {
     const invite = invitesRepo.disable(req.params.code.toUpperCase());
     if (!invite) throw notFound("invite not found");
+    auditRepo.log(req.auth!.usernameLc, "invite_disable", invite.code);
     res.json({ ok: true, invite });
+  }),
+);
+
+// ─── Audit log ─────────────────────────────────────────────────────────
+
+adminRouter.get(
+  "/audit",
+  asyncHandler(async (req, res) => {
+    const cursor = Number(req.query.cursor) || 0;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const { entries, nextCursor } = auditRepo.list(cursor, limit);
+    res.json({ entries, nextCursor, limit });
   }),
 );

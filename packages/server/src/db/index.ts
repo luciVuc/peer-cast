@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS users (
   banned_reason    TEXT,
   banned_at        INTEGER,
   token_version    INTEGER NOT NULL DEFAULT 0,
+  failed_logins    INTEGER NOT NULL DEFAULT 0,
+  failed_login_window INTEGER,
+  locked_until     INTEGER,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
@@ -178,6 +181,18 @@ CREATE TABLE IF NOT EXISTS recordings (
 );
 CREATE INDEX IF NOT EXISTS idx_recordings_user
   ON recordings(username_lc, created_at DESC);
+
+-- Admin audit log: immutable record of every moderation action.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id                  TEXT PRIMARY KEY,
+  actor_username_lc   TEXT NOT NULL,
+  action              TEXT NOT NULL,   -- ban|unban|role_change|takedown|report_resolve|invite_create|invite_disable|user_delete
+  target              TEXT NOT NULL,   -- username, broadcast id, invite code, etc.
+  detail              TEXT,            -- optional free-text context
+  created_at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created
+  ON audit_log(created_at DESC);
 `);
 
 // ─── Lightweight migrations for pre-existing databases ───────────────────────
@@ -205,6 +220,14 @@ ensureColumn(
   "token_version",
   "token_version INTEGER NOT NULL DEFAULT 0",
 );
+// Failed-login lockout columns.
+ensureColumn(
+  "users",
+  "failed_logins",
+  "failed_logins INTEGER NOT NULL DEFAULT 0",
+);
+ensureColumn("users", "failed_login_window", "failed_login_window INTEGER");
+ensureColumn("users", "locked_until", "locked_until INTEGER");
 
 // Refresh-token reuse detection columns (existing DBs).
 ensureColumn("refresh_tokens", "family", "family TEXT");
@@ -224,5 +247,38 @@ db.exec(
    WHERE broadcast_id IS NOT NULL
      AND broadcast_id NOT IN (SELECT id FROM broadcasts)`,
 );
+
+//
+// One-time migration: decode any existing inline base64 avatar data URLs
+// to files on disk. Exported so index.ts can call it after startup.
+// Rows that already have a /api/avatars/... URL are skipped.
+export function migrateAvatars(): void {
+  // Fire-and-forget: dynamic import avoids circular deps at module init time.
+  void import("../lib/avatar.js").then(({ saveAvatar }) => {
+    try {
+      const avatarRows = db
+        .prepare(
+          `SELECT username_lc, avatar_url FROM users WHERE avatar_url LIKE 'data:image/%'`,
+        )
+        .all() as { username_lc: string; avatar_url: string }[];
+      for (const r of avatarRows) {
+        try {
+          const url = saveAvatar(r.username_lc, r.avatar_url);
+          db.prepare(
+            `UPDATE users SET avatar_url = ? WHERE username_lc = ?`,
+          ).run(url, r.username_lc);
+        } catch {
+          /* skip broken entries */
+        }
+      }
+      if (avatarRows.length > 0)
+        console.log(
+          `[db] migrated ${avatarRows.length} inline avatar(s) to disk`,
+        );
+    } catch {
+      /* non-fatal */
+    }
+  });
+}
 
 export default db;

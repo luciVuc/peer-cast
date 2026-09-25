@@ -410,6 +410,48 @@ export const api = createApi({
       query: (id) => ({ url: `/recordings/${id}`, method: "DELETE" }),
       invalidatesTags: ["Recordings"],
     }),
+
+    //
+    // Public broadcast history for user profile page
+    getUserBroadcasts: b.query<
+      {
+        broadcasts: BroadcastWithUser[];
+        nextCursor: number | null;
+        limit: number;
+      },
+      { username: string; cursor?: number; limit?: number }
+    >({
+      query: ({ username, cursor, limit }) => {
+        const qs = new URLSearchParams();
+        if (cursor) qs.set("cursor", String(cursor));
+        if (limit) qs.set("limit", String(limit));
+        return `/users/${encodeURIComponent(username)}/broadcasts?${qs}`;
+      },
+      providesTags: (_r, _e, { username }) => [{ type: "User", id: username }],
+    }),
+
+    //
+    // Admin audit log
+    adminAuditLog: b.query<
+      {
+        entries: {
+          id: string;
+          actorUsername: string;
+          action: string;
+          target: string;
+          detail: string | null;
+          createdAt: number;
+        }[];
+        nextCursor: number | null;
+      },
+      { cursor?: number } | void
+    >({
+      query: (params) => {
+        const cursor = (params as { cursor?: number })?.cursor;
+        return `/admin/audit${cursor ? `?cursor=${cursor}` : ""}`;
+      },
+      providesTags: ["AdminUsers"],
+    }),
   }),
 });
 
@@ -461,4 +503,6 @@ export const {
   useUploadRecordingChunkMutation,
   useFinalizeRecordingMutation,
   useDeleteRecordingMutation,
+  useGetUserBroadcastsQuery,
+  useAdminAuditLogQuery,
 } = api;

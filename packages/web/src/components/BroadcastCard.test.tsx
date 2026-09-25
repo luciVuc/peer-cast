@@ -44,8 +44,16 @@ describe("BroadcastCard", () => {
     expect(screen.getByText("Live coding")).toBeInTheDocument();
     expect(screen.getByText(/Alice Johnson/)).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
-    expect(screen.getByText(/👁 7/)).toBeInTheDocument();
+    expect(screen.getByText(/7/)).toBeInTheDocument();
     expect(screen.getByText(/1000 kbps/)).toBeInTheDocument();
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/watch/alice");
+    // The card outer link points to the viewer page.
+    const links = screen.getAllByRole("link");
+    expect(links.some((l) => l.getAttribute("href") === "/watch/alice")).toBe(
+      true,
+    );
+    // Avatar and owner name links point to the user profile page.
+    expect(links.some((l) => l.getAttribute("href") === "/user/alice")).toBe(
+      true,
+    );
   });
 });

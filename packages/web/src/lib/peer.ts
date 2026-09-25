@@ -97,6 +97,10 @@ export interface ChatMessage {
   from: string;
   text: string;
   ts: number;
+  /** Peer ID of the sender
+   *  Only populated on the broadcaster side for mute/kick UI.
+   *  Never included in wire messages. */
+  senderPeerId?: string;
 }
 
 export function packChat(from: string, text: string): ChatMessage {
@@ -339,6 +343,8 @@ export class BroadcastHost {
   private opts: BroadcastHostOptions;
   /** Monotonically-increasing count of all accepted viewer connections. */
   private totalConnections = 0;
+  /** Peer IDs muted by the broadcaster (messages dropped, not kicked). */
+  private mutedPeers = new Set<string>();
 
   constructor(opts: BroadcastHostOptions) {
     this.opts = opts;
@@ -404,13 +410,69 @@ export class BroadcastHost {
   private handleChat(fromConn: DataConnection, data: unknown) {
     const raw = unpackChat(data);
     if (!raw) return;
+    // Drop messages from muted peers silently.
+    if (this.mutedPeers.has(fromConn.peer)) return;
     // Attribution comes solely from the ticket verified for this connection —
     // never from wire-supplied `from`/`name` (both are client-controlled).
     const msg = sanitizeChat(raw, this.names.get(fromConn.peer));
+    // Attach sender peer ID so the host UI can show mute/kick controls.
+    // This field is stripped before relaying to other viewers.
+    const msgWithPeer: ChatMessage = { ...msg, senderPeerId: fromConn.peer };
     for (const c of this.dataConns) {
-      if (c !== fromConn && c.open) c.send(JSON.stringify(msg));
+      if (c !== fromConn && c.open) {
+        const { senderPeerId: _drop, ...wireMsg } = msgWithPeer;
+        c.send(JSON.stringify(wireMsg));
+      }
     }
-    this.opts.onChat?.(msg);
+    this.opts.onChat?.(msgWithPeer);
+  }
+
+  /**
+   * Mute a viewer by peer id: their chat messages are silently dropped.
+   * The viewer can still watch — only their chat is suppressed.
+   */
+  mutePeer(peerId: string): void {
+    this.mutedPeers.add(peerId);
+  }
+
+  /** Un-mute a previously muted viewer. */
+  unmutePeer(peerId: string): void {
+    this.mutedPeers.delete(peerId);
+  }
+
+  isMuted(peerId: string): boolean {
+    return this.mutedPeers.has(peerId);
+  }
+
+  /**
+   * Kick a viewer by peer id: close their media + data connections.
+   * They will reconnect via the viewer page's automatic reconnect, but their
+   * ticket is consumed so a re-resolve is required — giving the broadcaster
+   * a window before they reconnect.
+   */
+  kickPeer(peerId: string): void {
+    for (const call of this.calls) {
+      if (call.peer === peerId) {
+        call.close();
+        this.calls.delete(call);
+      }
+    }
+    for (const conn of this.dataConns) {
+      if (conn.peer === peerId) {
+        conn.close();
+        this.dataConns.delete(conn);
+      }
+    }
+    this.names.delete(peerId);
+    this.mutedPeers.delete(peerId);
+  }
+
+  /** List all currently connected viewer peer IDs with their display names. */
+  connectedViewers(): Array<{ peerId: string; name: string }> {
+    return [...this.names.entries()].map(([peerId, name]) => ({
+      peerId,
+      name,
+    }));
   }
 
   /** Broadcast a chat line from the host to every connected viewer. */

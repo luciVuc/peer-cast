@@ -5,7 +5,7 @@ import { issueTicket, verifyTicket } from "../lib/auth.js";
 import { notFound } from "../lib/errors.js";
 import { asyncHandler } from "../middleware/error.js";
 import { optionalAuth } from "../middleware/auth.js";
-import { broadcastsRepo } from "../repos/broadcasts.js";
+import { broadcastsRepo, rowStatsOf } from "../repos/broadcasts.js";
 
 export const sessionsRouter = Router();
 
@@ -38,6 +38,7 @@ sessionsRouter.get(
         ...base,
         peerId: row.peer_id,
         ticket: null,
+        stats: rowStatsOf(row),
       } as ResolveResponse);
       return;
     }
@@ -48,7 +49,12 @@ sessionsRouter.get(
         return;
       }
       const ticket = issueTicket(req.auth.usernameLc, row.peer_id!);
-      res.json({ ...base, peerId: row.peer_id, ticket } as ResolveResponse);
+      res.json({
+        ...base,
+        peerId: row.peer_id,
+        ticket,
+        stats: rowStatsOf(row),
+      } as ResolveResponse);
       return;
     }
 
@@ -61,7 +67,12 @@ sessionsRouter.get(
       return;
     }
     const ticket = issueTicket(req.auth?.usernameLc ?? null, row.peer_id!);
-    res.json({ ...base, peerId: row.peer_id, ticket } as ResolveResponse);
+    res.json({
+      ...base,
+      peerId: row.peer_id,
+      ticket,
+      stats: rowStatsOf(row),
+    } as ResolveResponse);
   }),
 );
 

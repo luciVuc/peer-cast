@@ -63,6 +63,7 @@ export function Layout() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [drawerQ, setDrawerQ] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -168,6 +169,14 @@ export function Layout() {
 
   return (
     <div className="flex min-h-full flex-col">
+      {/* Skip-to-content link for keyboard/screen-reader users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50
+                   focus:rounded focus:bg-brand-500 focus:px-4 focus:py-2 focus:text-white"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-900/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
           {/* Mobile hamburger */}
@@ -205,19 +214,56 @@ export function Layout() {
           </form>
 
           <nav className="ml-auto flex items-center gap-2">
+            {/* Mobile search icon — visible to all users on small screens */}
+            <button
+              type="button"
+              aria-label={mobileSearchOpen ? "Close search" : "Search"}
+              onClick={() => setMobileSearchOpen((o) => !o)}
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 transition hover:bg-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-500/60 sm:hidden"
+            >
+              {mobileSearchOpen ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  className="h-5 w-5"
+                >
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  className="h-5 w-5"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+              )}
+            </button>
             {user ? (
               <>
                 {isLive ? (
                   <NavLink
                     to="/broadcast"
+                    aria-label="Manage your live broadcast"
                     className="flex min-h-11 items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
                   >
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
+                    <span
+                      className="h-2 w-2 animate-pulse rounded-full bg-white"
+                      aria-hidden="true"
+                    />
                     Live
                   </NavLink>
                 ) : (
                   <NavLink
                     to="/broadcast"
+                    aria-label="Start a broadcast"
                     className={({ isActive }) =>
                       `btn-ghost ${isActive ? "ring-1 ring-brand-500" : ""}`
                     }
@@ -267,6 +313,30 @@ export function Layout() {
           </nav>
         </div>
       </header>
+
+      {/* Mobile search bar — expands below the header on small screens */}
+      {mobileSearchOpen && (
+        <div className="border-b border-white/5 bg-ink-900/90 px-4 py-2 sm:hidden">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const term = q.trim();
+              if (term) {
+                setMobileSearchOpen(false);
+                navigate(`/?q=${encodeURIComponent(term)}`);
+              }
+            }}
+          >
+            <input
+              className="input"
+              placeholder="Search users and live broadcasts…"
+              value={q}
+              autoFocus
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </form>
+        </div>
+      )}
 
       {/* ─── Mobile drawer ────────────────────────────────────────────────── */}
       {user && drawerOpen && (
@@ -367,7 +437,10 @@ export function Layout() {
         </>
       )}
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+      <main
+        id="main-content"
+        className="mx-auto w-full max-w-6xl flex-1 px-4 py-6"
+      >
         <Outlet />
       </main>
 

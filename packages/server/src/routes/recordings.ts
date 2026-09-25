@@ -23,6 +23,15 @@ export const recordingsRouter = Router();
 
 recordingsRouter.use(requireAuth);
 
+// Validate every :id param before any route handler runs.
+// Rejects path-traversal attempts (e.g. "../../etc/passwd") with 400.
+// Note: this runs after requireAuth (middleware ordering) so it only
+// fires for authenticated requests, preserving 401 for unauthenticated ones.
+recordingsRouter.param("id", (_req, _res, next, id: string) => {
+  recordingsRepo.assertValidId(id);
+  next();
+});
+
 // ─── My recordings (dashboard replay list) ───────────────────────────────────
 
 recordingsRouter.get(
