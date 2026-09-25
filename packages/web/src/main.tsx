@@ -4,7 +4,6 @@ import { Provider } from "react-redux";
 import App from "./App";
 import { store } from "./store";
 import { tokensUpdated, loggedOut } from "./store/authSlice";
-// @ts-expect-error CSS is loaded by the bundler; TypeScript may not have a CSS module declaration.
 import "./index.css";
 
 /**
