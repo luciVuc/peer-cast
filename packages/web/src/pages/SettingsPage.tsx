@@ -4,6 +4,7 @@ import { useBlocker, useNavigate } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
 import { Spinner } from "../components/Spinner";
 import { Modal } from "../components/Modal";
+import { MarkdownEditor } from "../components/MarkdownEditor";
 import {
   useChangeEmailMutation,
   useChangePasswordMutation,
@@ -292,18 +293,14 @@ export function SettingsPage() {
               }}
             />
           </div>
-          <div>
-            <label className="label">About</label>
-            <textarea
-              className="input"
-              rows={3}
-              value={about}
-              onChange={(e) => {
-                setAbout(e.target.value);
-                setDirty(true);
-              }}
-            />
-          </div>
+          <MarkdownEditor
+            label="About"
+            value={about}
+            onChange={setAbout}
+            onDirty={() => setDirty(true)}
+            rows={5}
+            hint="Markdown supported: **bold**, _italic_, `code`, [links](https://…), - lists, > quotes."
+          />
           <button
             className="btn-primary"
             onClick={saveProfile}

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
 import { BroadcastCard } from "../components/BroadcastCard";
 import { IllustratedMessage } from "../components/IllustratedMessage";
+import { Markdown } from "../components/Markdown";
 import { Spinner } from "../components/Spinner";
 import {
   useFollowUserMutation,
@@ -95,7 +96,9 @@ export function UserProfilePage() {
             <h1 className="text-2xl font-bold">{user.displayName}</h1>
             <p className="text-slate-400">@{username}</p>
             {user.about && (
-              <p className="mt-2 text-sm text-slate-300">{user.about}</p>
+              <div className="mt-2">
+                <Markdown>{user.about}</Markdown>
+              </div>
             )}
             <p className="mt-2 text-xs text-slate-500">
               Member since {fmtDate(user.createdAt)}

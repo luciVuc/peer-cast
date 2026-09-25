@@ -4,6 +4,7 @@ import type { BroadcastWithUser, Recording } from "@peer-cast/shared";
 import { Avatar } from "../components/Avatar";
 import { Spinner } from "../components/Spinner";
 import { IllustratedMessage } from "../components/IllustratedMessage";
+import { Markdown } from "../components/Markdown";
 
 const accessLabel: Record<string, string> = {
   public: "Public",
@@ -269,7 +270,9 @@ export function DashboardPage() {
           <h2 className="mt-3 text-lg font-bold">{me.user.displayName}</h2>
           <p className="text-sm text-slate-400">@{me.user.username}</p>
           {me.user.about && (
-            <p className="mt-2 text-sm text-slate-300">{me.user.about}</p>
+            <div className="mt-2 text-left">
+              <Markdown>{me.user.about}</Markdown>
+            </div>
           )}
           <div className="mt-4 flex flex-col gap-2">
             {broadcastStatus === "live" ? (

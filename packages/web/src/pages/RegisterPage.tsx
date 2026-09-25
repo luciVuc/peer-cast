@@ -6,6 +6,7 @@ import { useAppDispatch } from "../store";
 import { loggedIn } from "../store/authSlice";
 import { addToast, errorMessage } from "../store/toastSlice";
 import { IllustratedMessage } from "../components/IllustratedMessage";
+import { MarkdownEditor } from "../components/MarkdownEditor";
 
 export function RegisterPage() {
   const { data: cfg } = useGetConfigQuery();
@@ -133,15 +134,13 @@ export function RegisterPage() {
               </p>
             )}
           </div>
-          <div>
-            <label className="label">About (optional)</label>
-            <textarea
-              className="input"
-              rows={2}
-              value={form.about}
-              onChange={(e) => set("about", e.target.value)}
-            />
-          </div>
+          <MarkdownEditor
+            label="About (optional)"
+            value={form.about}
+            onChange={(next) => set("about", next)}
+            rows={3}
+            hint="Markdown supported — it renders on your profile."
+          />
           {mode === "invite" && (
             <div>
               <label className="label">Invite code</label>
