@@ -1,6 +1,6 @@
 {
   "name": "peer-cast",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "private": true,
   "license": "MIT",
   "description": "Broadcast a browser tab or screen to anyone over direct peer-to-peer WebRTC. Self-hostable Node.js backend + React PWA + optional Chrome extension.",
