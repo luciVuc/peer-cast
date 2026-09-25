@@ -1,60 +1,16 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import { Layout } from "./components/Layout";
-import { Toasts } from "./components/Toasts";
-import { ProtectedRoute } from "./components/ProtectedRoute";
-import { AdminRoute } from "./components/AdminRoute";
-import { LandingPage } from "./pages/LandingPage";
-import { LoginPage } from "./pages/LoginPage";
-import { RegisterPage } from "./pages/RegisterPage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { BroadcastPage } from "./pages/BroadcastPage";
-import { ViewerPage } from "./pages/ViewerPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { AdminPage } from "./pages/AdminPage";
-import { VerifyEmailPage } from "./pages/VerifyEmailPage";
-import { VerifyEmailChangePage } from "./pages/VerifyEmailChangePage";
-import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
-import { ResetPasswordPage } from "./pages/ResetPasswordPage";
-import { NotFoundPage } from "./pages/NotFoundPage";
-import { UserProfilePage } from "./pages/UserProfilePage";
-import { EmbedPage } from "./pages/EmbedPage";
+import { RouterProvider, createBrowserRouter } from "react-router-dom";
+import { routes } from "./routes";
+
+/**
+ * The data router.
+ *
+ * Created once at module scope — NOT inside the component. React Router keeps
+ * router state internally, so re-creating it on every render would throw away
+ * the navigation state and remount the whole tree. Module scope also keeps it
+ * outside React, which is what the React Router docs require.
+ */
+const router = createBrowserRouter(routes);
 
 export default function App() {
-  return (
-    <>
-      <Toasts />
-      <Routes>
-        {/* Embed route: no Layout, no auth wall, renders full-height in iframes */}
-        <Route path="embed/:username" element={<EmbedPage />} />
-
-        <Route element={<Layout />}>
-          <Route index element={<LandingPage />} />
-          <Route path="login" element={<LoginPage />} />
-          <Route path="register" element={<RegisterPage />} />
-          <Route path="verify-email" element={<VerifyEmailPage />} />
-          <Route
-            path="verify-email-change"
-            element={<VerifyEmailChangePage />}
-          />
-          <Route path="forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="reset-password" element={<ResetPasswordPage />} />
-          <Route path="watch/:username" element={<ViewerPage />} />
-          <Route path="user/:username" element={<UserProfilePage />} />
-
-          <Route element={<ProtectedRoute />}>
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="broadcast" element={<BroadcastPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-          </Route>
-
-          <Route element={<AdminRoute />}>
-            <Route path="admin" element={<AdminPage />} />
-          </Route>
-
-          <Route path="404" element={<NotFoundPage />} />
-          <Route path="*" element={<Navigate to="/404" replace />} />
-        </Route>
-      </Routes>
-    </>
-  );
+  return <RouterProvider router={router} />;
 }

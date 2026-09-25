@@ -96,6 +96,23 @@ export function SettingsPage() {
     }
   }, [me]);
 
+  // Reflect the device's actual push subscription state once the user visits
+  // this page (VAPID availability gates the whole section).
+  //
+  // NOTE: this must stay above the `isLoading` early return below — a hook
+  // after a conditional return makes the hook count differ between the loading
+  // render and the loaded render ("Rendered more hooks than during the
+  // previous render").
+  useEffect(() => {
+    let alive = true;
+    void getPushSubscription().then((sub) => {
+      if (alive) setNotifOn(!!sub);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   if (isLoading || !me) return <Spinner label="Loading settings…" />;
 
   function onAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -165,18 +182,6 @@ export function SettingsPage() {
       dispatch(addToast(errorMessage(err, "Could not change email"), "error"));
     }
   }
-
-  // Reflect the device's actual push subscription state once the user visits
-  // this page (VAPID availability gates the whole section).
-  useEffect(() => {
-    let alive = true;
-    void getPushSubscription().then((sub) => {
-      if (alive) setNotifOn(!!sub);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   async function toggleNotifications() {
     if (!vapid || notifBusy) return;

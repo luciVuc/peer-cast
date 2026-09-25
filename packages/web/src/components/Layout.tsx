@@ -179,25 +179,6 @@ export function Layout() {
       </a>
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-900/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          {/* Mobile hamburger */}
-          <button
-            type="button"
-            aria-label="Open menu"
-            onClick={() => setDrawerOpen(true)}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 transition hover:bg-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-500/60 sm:hidden"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              className="h-5 w-5"
-            >
-              <path d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-
           <Link to="/" className="flex items-center gap-2 font-bold">
             <span className="text-xl">📡</span>
             <span className="text-lg tracking-tight">PeerCast</span>
@@ -310,6 +291,25 @@ export function Layout() {
                 </Link>
               </>
             )}
+
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              aria-label="Open menu"
+              onClick={() => setDrawerOpen(true)}
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 transition hover:bg-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-500/60 sm:hidden"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                className="h-5 w-5"
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           </nav>
         </div>
       </header>

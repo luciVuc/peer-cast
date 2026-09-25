@@ -1,10 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Provider } from "react-redux";
-import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { store } from "./store";
 import { tokensUpdated, loggedOut } from "./store/authSlice";
+// @ts-expect-error CSS is loaded by the bundler; TypeScript may not have a CSS module declaration.
 import "./index.css";
 
 /**
@@ -39,9 +39,7 @@ async function boot() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <Provider store={store}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <App />
       </Provider>
     </React.StrictMode>,
   );
