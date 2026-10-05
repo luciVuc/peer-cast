@@ -22,6 +22,12 @@ async function boot() {
         // Ensure the HttpOnly cookie is included (same-origin fetch always
         // sends cookies, but being explicit is harmless).
         credentials: "same-origin",
+        // This blocks the first render, so it must be bounded: a server that
+        // accepts the connection and never responds (captive portal, proxy
+        // stall) would otherwise leave a permanently blank page with no error
+        // and no retry. Failing closed to `loggedOut` is the safe outcome —
+        // the user signs in again instead of staring at white.
+        signal: AbortSignal.timeout(8000),
       });
       if (res.ok) {
         const data = (await res.json()) as { accessToken: string };
@@ -44,4 +50,8 @@ async function boot() {
   );
 }
 
-void boot();
+// A throw outside the try above (e.g. a missing #root) would otherwise be an
+// unhandled rejection with no user-visible feedback.
+void boot().catch((err) => {
+  console.error("[peercast] boot failed", err);
+});

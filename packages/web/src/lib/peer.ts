@@ -173,7 +173,7 @@ export interface ViewerHandle {
  * a benign console error in headless/CI environments but still produces a
  * valid audio track for SDP negotiation).
  */
-function dummyStream(): MediaStream {
+function dummyStream(): { stream: MediaStream; dispose: () => void } {
   const canvas = Object.assign(document.createElement("canvas"), {
     width: 16,
     height: 16,
@@ -187,6 +187,12 @@ function dummyStream(): MediaStream {
 
   // Add a silent audio track so the SDP offer includes m=audio.  Use the
   // virtual sink API to avoid requiring actual audio hardware.
+  //
+  // The AudioContext is retained so `dispose` can close it. PeerJS does not
+  // stop local tracks when a call closes, and the viewer auto-reconnects with
+  // backoff, so without this every reconnect leaks a live audio thread, an
+  // oscillator, and a canvas track — unbounded growth over a long session.
+  let actx: AudioContext | null = null;
   try {
     const opts: AudioContextOptions = {};
     // AudioContext.setSinkId / sinkId option is Chrome 110+
@@ -194,7 +200,7 @@ function dummyStream(): MediaStream {
     if ("setSinkId" in AudioContext.prototype) {
       (opts as Record<string, unknown>).sinkId = { type: "none" };
     }
-    const actx = new AudioContext(opts);
+    actx = new AudioContext(opts);
     const dest = actx.createMediaStreamDestination();
     const osc = actx.createOscillator();
     osc.frequency.value = 0; // silence
@@ -207,7 +213,21 @@ function dummyStream(): MediaStream {
      * failure which the viewer error UI already handles. */
   }
 
-  return video;
+  return {
+    stream: video,
+    dispose: () => {
+      for (const t of video.getTracks()) {
+        try {
+          t.stop();
+        } catch {
+          /* noop */
+        }
+      }
+      // Release the audio hardware thread; without this the context keeps
+      // running (muted, via the virtual sink) for the life of the page.
+      if (actx && actx.state !== "closed") void actx.close().catch(() => {});
+    },
+  };
 }
 
 export interface ConnectAsViewerOptions {
@@ -230,6 +250,9 @@ export function connectAsViewer(options: ConnectAsViewerOptions): ViewerHandle {
   let call: MediaConnection | null = null;
   let data: DataConnection | null = null;
   let chatQueue: string[] = [];
+  // The placeholder stream this viewer dials with (see dummyStream). Released
+  // on close so reconnects don't accumulate audio contexts.
+  let dummy: { stream: MediaStream; dispose: () => void } | null = null;
 
   const handle: ViewerHandle = {
     peer,
@@ -247,6 +270,8 @@ export function connectAsViewer(options: ConnectAsViewerOptions): ViewerHandle {
       } catch {
         /* noop */
       }
+      dummy?.dispose();
+      dummy = null;
       peer.destroy();
     },
     sendChat(text: string) {
@@ -265,7 +290,8 @@ export function connectAsViewer(options: ConnectAsViewerOptions): ViewerHandle {
   };
 
   peer.on("open", () => {
-    call = peer.call(targetPeerId, dummyStream(), {
+    dummy = dummyStream();
+    call = peer.call(targetPeerId, dummy.stream, {
       metadata: { ticket, viewerPeerId: peer.id },
     });
     call.on("stream", (remote) => options.onStream(remote));

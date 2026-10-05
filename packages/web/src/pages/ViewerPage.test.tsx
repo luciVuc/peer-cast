@@ -191,6 +191,42 @@ describe("ViewerPage reconnect", () => {
     expect(connectAsViewer).toHaveBeenCalledTimes(2);
   });
 
+  it("offers Retry — not a dead spinner — when a long watch drops after the window", async () => {
+    hostLive = true;
+    renderViewer();
+    await settle();
+    act(() => handle.onStream(fakeStream));
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+
+    // Watch for longer than RETRY_WINDOW_MS. onStream refreshes the retry
+    // deadline, so the window is measured from the last frame received — this
+    // is the ordinary case for any real viewer, not an edge case.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+
+    // Now the host's network blips. The window is already spent.
+    hostLive = false;
+    act(() => handle.onClose());
+
+    // Regression: onClose sets phase "resolving" *before* calling
+    // scheduleReconnect(), so a silent no-op there left the viewer on a
+    // permanent "Finding broadcast…" spinner with no Retry button — the only
+    // escape was a full page reload.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.queryByText("Finding broadcast…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    // And the button actually works: a manual Retry re-arms the full window.
+    hostLive = true;
+    act(() => screen.getByRole("button", { name: "Retry" }).click());
+    await settle();
+    expect(connectAsViewer).toHaveBeenCalledTimes(2);
+  });
+
   it("does not poll in the background for a host that was never live", async () => {
     renderViewer();
     await settle();

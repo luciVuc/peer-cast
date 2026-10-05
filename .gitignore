@@ -22,4 +22,7 @@ Thumbs.db
 **/playwright-report/
 **/.last-run.json
 tests/e2e/.tmp/
+# Default RECORDINGS_DIR when a test forgets to isolate it; uploads are
+# user media and must never be committed.
+packages/server/recordings/
 _git

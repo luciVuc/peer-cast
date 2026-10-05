@@ -18,6 +18,22 @@ export async function verifyPassword(
   return bcrypt.compare(plain, hash);
 }
 
+/**
+ * A real cost-12 hash of 32 random bytes, computed once at boot, used as the
+ * comparison target when the username doesn't exist. Logging in must cost the
+ * same whether or not the account is real, or response time enumerates
+ * usernames: `!!user && await verify(...)` skips bcrypt entirely for an unknown
+ * user, making the no-user path sub-millisecond against a ~300 ms real compare.
+ *
+ * Derived at runtime rather than committed so it can never be mistaken for a
+ * credential, and its plaintext is discarded immediately — it protects no
+ * account.
+ */
+export const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
+  randomBytes(32).toString("hex"),
+  12,
+);
+
 // ─── Access tokens (stateless JWT) ───────────────────────────────────────────
 
 export interface AccessClaims {

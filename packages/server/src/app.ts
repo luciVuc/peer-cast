@@ -337,9 +337,22 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     // Reports: 10/h per IP.
     app.use("/api/reports", mkLim("report-ip", 60 * 60_000, 10));
     // Follow writes: 60/15 min per IP (prevents follow-graph spam).
-    app.use("/api/users/:username/follow", mkLim("follow-ip", 15 * 60_000, 60));
+    // Scoped to POST: a prefix mount would also cap DELETE /follow, so an
+    // account unfollowing in bulk (or a user cleaning up several accounts)
+    // would hit the write limit at a quarter of its intended rate.
+    const followLim = mkLim("follow-ip", 15 * 60_000, 60);
+    app.use("/api/users/:username/follow", (req, res, next) => {
+      if (req.method !== "POST") return next();
+      return followLim(req, res, next);
+    });
     // Push subscribe: 5/h per IP (prevents subscription-table bloat).
-    app.use("/api/push/subscribe", mkLim("push-ip", 60 * 60_000, 5));
+    // Scoped to POST so unsubscribing is never throttled by the subscribe
+    // budget — a user rotating browsers must always be able to opt out.
+    const pushSubLim = mkLim("push-ip", 60 * 60_000, 5);
+    app.use("/api/push/subscribe", (req, res, next) => {
+      if (req.method !== "POST") return next();
+      return pushSubLim(req, res, next);
+    });
     // Recording chunk uploads: headroom for a real broadcast (MediaRecorder
     // emits a chunk every few seconds); 600/15min ≈ one chunk/s, generous.
     app.use(
@@ -347,7 +360,16 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
       mkLim("rec-chunk-ip", 15 * 60_000, 600),
     );
     // Creating recordings: 20/h per IP.
-    app.use("/api/recordings", mkLim("rec-create-ip", 60 * 60_000, 20));
+    // Scope to the create endpoint EXACTLY, same reason as bstartLim below:
+    // `app.use` is a prefix mount, so a bare limiter on "/api/recordings"
+    // also swallows PUT /api/recordings/:id/chunk. MediaRecorder emits a
+    // chunk every few seconds, so a 20/hour budget truncates the recording
+    // after ~20 chunks — silently losing the tail of the replay.
+    const recCreateLim = mkLim("rec-create-ip", 60 * 60_000, 20);
+    app.use("/api/recordings", (req, res, next) => {
+      if (req.method !== "POST" || req.path !== "/") return next();
+      return recCreateLim(req, res, next);
+    });
     // Going live: 60/h per IP. POST /api/broadcasts writes a row and fans a
     // push notification out to every follower, so without a ceiling a tight
     // start/end loop grows the table and mailboxes for free.

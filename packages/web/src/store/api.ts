@@ -45,6 +45,8 @@ import type {
   VerifyTicketResponse,
 } from "@peer-cast/shared";
 import { tokensUpdated, loggedOut } from "./authSlice";
+import { broadcastStopped } from "./broadcastSlice";
+import { broadcastService } from "../lib/broadcastService";
 import type { RootState } from "./index";
 
 const rawBaseQuery = fetchBaseQuery({
@@ -96,9 +98,17 @@ const baseQueryWithReauth: BaseQueryFn<
         apiCtx.dispatch(tokensUpdated({ accessToken: data.accessToken }));
         result = await rawBaseQuery(args, apiCtx, extraOptions);
       } else {
+        // The session is gone for good (refresh token expired, rotation family
+        // revoked, or the account was banned). Tear the broadcast down first:
+        // clearing auth state alone leaves the camera capturing and the host
+        // still answering PeerJS calls, so viewers keep receiving media while
+        // the UI has bounced the broadcaster to /login. Media must stop when
+        // the session does, not when the user remembers to.
+        broadcastService.cleanup();
+        apiCtx.dispatch(broadcastStopped());
         apiCtx.dispatch(loggedOut());
-        // The session is gone; drop every cached result (the old user's
-        // profile, broadcasts, etc.) so a later login can't surface stale data.
+        // The old user's profile, broadcasts, etc. must not resurface for
+        // whoever signs in next.
         apiCtx.dispatch(api.util.resetApiState());
       }
     }

@@ -10,6 +10,7 @@ import {
 import type { AuthResponse, RefreshResponse } from "@peer-cast/shared";
 import {
   consumeRefreshToken,
+  DUMMY_PASSWORD_HASH,
   hashPassword,
   issueRefreshToken,
   issueSignalingTicket,
@@ -161,7 +162,13 @@ authRouter.post(
         displayName: rawUser.display_name,
         verifyUrl,
       });
-      void sendEmail({ to: rawUser.email, ...tmpl });
+      // `.catch()` is mandatory, not optional: sendEmail is async, so the
+      // try/catch above only covers synchronous throws. Without it, an SMTP
+      // failure (rejected host, greylisting, missing STARTTLS) rejects into
+      // the microtask queue as an unhandled rejection — which terminates a
+      // Node >=20 process — killing every live broadcast over a bad mail
+      // config. AGENTS.md rule 19: email must never reach the HTTP path.
+      void sendEmail({ to: rawUser.email, ...tmpl }).catch(() => {});
     } catch {
       /* non-fatal */
     }
@@ -188,8 +195,14 @@ authRouter.post(
       );
     }
     // Constant-ish behaviour: still hash-compare against a dummy if no user.
-    const ok =
-      !!user && (await verifyPassword(body.password, user.password_hash));
+    // The dummy compare is the whole point — `!!user && await verify(...)`
+    // short-circuits and skips bcrypt entirely for an unknown username, so
+    // cost-12 (~300 ms) vs sub-millisecond is remotely measurable and
+    // enumerates accounts. Compare unconditionally, then branch on the result.
+    const ok = await verifyPassword(
+      body.password,
+      user?.password_hash ?? DUMMY_PASSWORD_HASH,
+    );
     if (!user || !ok) {
       // Record the failure before throwing so we don't reveal whether the
       // user exists by the presence/absence of the counter update.

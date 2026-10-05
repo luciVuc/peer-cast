@@ -95,6 +95,13 @@ export function BroadcastPage() {
   const broadcastIdRef = useRef<string | null>(null);
   const statusRef = useRef(broadcastStatus);
   const endingRef = useRef(false);
+  // Set by endLive() so the in-flight goLive() can tell that the user already
+  // stopped (native "Stop sharing", or the End button) while it was awaiting
+  // the server. Without it, goLive resumes after those awaits and dispatches
+  // broadcastLive() over a stopped stream — leaving the UI claiming "live",
+  // a peer advertising a peerId the server still lists as live, and viewers
+  // receiving black frames, with no End button in reach to escape it.
+  const liveAbortedRef = useRef(false);
   useEffect(() => {
     statusRef.current = broadcastStatus;
   }, [broadcastStatus]);
@@ -239,6 +246,7 @@ export function BroadcastPage() {
       return;
     }
     dispatch(broadcastStarting());
+    liveAbortedRef.current = false;
     try {
       if (!navigator.mediaDevices) {
         throw new Error(
@@ -300,6 +308,9 @@ export function BroadcastPage() {
         /* non-fatal */
       }
 
+      // The user may have stopped sharing while that request was in flight.
+      if (liveAbortedRef.current) return;
+
       const peerId = freshPeerId();
       const { broadcast } = await startBroadcastMutation({
         title: title.trim() || "Live broadcast",
@@ -308,6 +319,14 @@ export function BroadcastPage() {
         peerId,
         accessCode: access === "code" ? accessCode.trim() : undefined,
       }).unwrap();
+
+      // …or while the start request was in flight. Now we have a server-side
+      // row to retire, so close it out and return without ever going live.
+      if (liveAbortedRef.current) {
+        await endBroadcastMutation(broadcast.id).catch(() => {});
+        broadcastService.cleanup();
+        return;
+      }
       broadcastIdRef.current = broadcast.id;
 
       const host = new BroadcastHost({
@@ -340,7 +359,31 @@ export function BroadcastPage() {
       });
 
       broadcastService.setHost(host);
-      await host.ready();
+      // PeerJS retries the signaling socket indefinitely and emits neither
+      // "open" nor "error" when a proxy accepts the connection without
+      // completing the handshake, so ready() can wait forever — leaving a
+      // disabled "Starting…" button and a lit camera with no diagnostic.
+      // Bound it, and name the usual cause: this is the first thing a
+      // self-hoster hits when PUBLIC_SECURE / the reverse proxy is wrong.
+      await Promise.race([
+        host.ready(),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "Signaling did not respond. Check that the server URL is correct and that your reverse proxy forwards WebSocket upgrades to /peerjs.",
+                ),
+              ),
+            15_000,
+          ),
+        ),
+      ]);
+
+      if (liveAbortedRef.current) {
+        broadcastService.cleanup();
+        return;
+      }
 
       dispatch(
         broadcastLive({
@@ -452,6 +495,9 @@ export function BroadcastPage() {
     // during cleanup.  Read live values from refs, never from closure state.
     if (endingRef.current) return;
     if (statusRef.current === "idle") return;
+    // Signal any in-flight goLive() to unwind instead of going live over a
+    // stream the user just stopped (see liveAbortedRef).
+    liveAbortedRef.current = true;
     endingRef.current = true;
     dispatch(broadcastEnding());
     const id = broadcastIdRef.current;

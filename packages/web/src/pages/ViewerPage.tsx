@@ -105,13 +105,21 @@ export function ViewerPage() {
    * manual Retry plus an armed timer can't stack up duplicate polls.
    *
    * A no-op once RETRY_WINDOW_MS is spent, which is what stops this loop from
-   * polling forever. Deliberately does NOT touch `phase`: the caller decides
-   * what the user sees while we wait (a spinner for an expected drop, the
-   * "isn't live" message when the host is genuinely offline).
+   * polling forever. When the window is spent we drop to the "offline" phase
+   * so the Retry button appears: the caller sets "resolving" *before* calling
+   * us, so returning silently strands the viewer on a permanent spinner with
+   * no recovery but a page reload.
    */
   function scheduleReconnect() {
     if (disposedRef.current) return;
-    if (Date.now() >= retryDeadlineRef.current) return;
+    if (Date.now() >= retryDeadlineRef.current) {
+      // Window spent. Surface the Retry button instead of leaving the caller
+      // on whatever phase it chose — onClose sets "resolving" *before* calling
+      // us, so returning silently here strands the viewer on a permanent
+      // "Finding broadcast…" spinner with no way out but a page reload.
+      setPhase("offline");
+      return;
+    }
     const delay = reconnectDelay.current;
     reconnectDelay.current = Math.min(delay * 2, 30_000);
     if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
