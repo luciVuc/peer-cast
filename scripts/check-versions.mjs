@@ -3,6 +3,11 @@
  * Version-SSOT guard: every version-carrying file must match the root
  * package.json (the single source of truth per AGENTS.md rule 13).
  *
+ * The file list and the readers come from `version-files.mjs`, which
+ * `sync-version.mjs` also uses — so the checker and the fixer can't drift apart
+ * on which files matter. This script additionally asserts the *negative*
+ * cases: places that must never carry a hardcoded version literal.
+ *
  * Dependency-free, so it runs anywhere (`node scripts/check-versions.mjs`).
  */
 
@@ -10,44 +15,28 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  JSON_VERSION_FILES,
+  OPENAPI_FILE,
+  readJsonVersion,
+  readOpenapiVersion,
+  rootVersion,
+} from "./version-files.mjs";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(resolve(root, p), "utf8");
-const json = (p) => JSON.parse(read(p));
 
-const version = json("package.json").version;
+const version = rootVersion();
 
 const failures = [];
 const mustEqual = (label, actual) => {
   if (actual !== version) failures.push(`${label} (${actual})`);
 };
 
-for (const pkg of [
-  "packages/shared",
-  "packages/server",
-  "packages/web",
-  "packages/extension",
-  "tests/e2e",
-]) {
-  mustEqual(`${pkg}/package.json`, json(`${pkg}/package.json`).version);
+for (const file of JSON_VERSION_FILES) {
+  mustEqual(file, readJsonVersion(file));
 }
-
-mustEqual(
-  "packages/extension/manifest.json",
-  json("packages/extension/manifest.json").version,
-);
-
-// openapi.yaml — read the info block version value.
-const yaml = read("openapi.yaml");
-const infoMatch = yaml.match(/^info:\s*$/m);
-if (!infoMatch) {
-  failures.push("openapi.yaml missing info block");
-} else {
-  const after = yaml.slice(infoMatch.index);
-  const v = after.match(/^\s*version:\s*(.+)$/m);
-  if (!v || v[1].trim().replace(/^"|"$/g, "") !== version) {
-    failures.push(`openapi.yaml info.version (${v ? v[1].trim() : "missing"})`);
-  }
-}
+mustEqual(`${OPENAPI_FILE} info.version`, readOpenapiVersion() ?? "missing");
 
 // server config interprets versions only from environment or manifests — it
 // must never carry a hardcoded copy of the version (that is exactly the drift
@@ -71,7 +60,8 @@ if (/: \d+\.\d+\.\d+(\s|$|#)/.test(read("docker-compose.yml"))) {
 if (failures.length) {
   console.error(
     `Version SSOT mismatch (root package.json = ${version}):\n` +
-      failures.map((f) => `  - ${f}`).join("\n"),
+      failures.map((f) => `  - ${f}`).join("\n") +
+      "\n\nFix with: npm run sync:versions",
   );
   process.exit(1);
 }

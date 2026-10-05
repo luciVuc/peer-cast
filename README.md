@@ -793,9 +793,27 @@ grabbed by the layout switcher — remap if needed.
 ```bash
 npm test                 # Vitest: server (94 tests) + web (29 tests) unit tests
 npm run test:e2e         # build → Playwright E2E (5 tests: UI flows + real WebRTC)
+npm run check:versions   # every version-carrying file matches root package.json
 
 # First time only — downloads the Playwright browser
 npm -w @peer-cast/e2e run install-browser
+```
+
+### Releasing a new version
+
+```bash
+npm version 1.2.0        # bumps root package.json + mirrors into all carriers
+```
+
+npm only rewrites the root manifest, so a `version` lifecycle hook
+(`scripts/sync-version.mjs`) propagates the new version to the workspace
+manifests, the extension `manifest.json` and `openapi.yaml` _before_ npm commits
+and tags, then `postversion` re-runs `npm run check:versions`. One command, one
+self-consistent commit and tag.
+
+```bash
+npm run sync:versions              # repair drift by hand
+npm run sync:versions -- --dry-run # preview without writing
 ```
 
 ### What the tests cover

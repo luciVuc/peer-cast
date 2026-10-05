@@ -170,6 +170,16 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     popup badge). Do NOT copy the version into code or docs — derive it from
     the root manifest. This includes `server/src/config.ts`: its fallback is a
     marker (`dev`), never a literal version. Set `APP_VERSION` to override.
+    **Bump with `npm version <x.y.z>` from the repo root** — npm only rewrites
+    the root manifest, so a `version` lifecycle hook
+    (`scripts/sync-version.mjs`) mirrors it into every carrier _before_ npm
+    commits and tags, and a `postversion` hook re-runs the checker. Both share
+    the file list in `scripts/version-files.mjs` with the checker so the fixer
+    and the guard can't drift apart. The fixer stages what it changed because
+    npm otherwise stages only `package.json` + the lockfile, which would leave
+    the tag pointing at a commit with stale carriers. `npm version --workspaces`
+    bypasses root lifecycle hooks entirely — don't use it here. To repair
+    drift by hand: `npm run sync:versions` (`-- --dry-run` to preview).
 
 14. **SQLite path is a Docker volume** (`/data`). Never commit `*.db` files.
 
