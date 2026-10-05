@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import express from "express";
 import type { Express } from "express";
 import { makeApp, resetDb, validUser } from "./helpers.js";
+import { configureApp } from "../src/app.js";
 import { db } from "../src/db/index.js";
 import { broadcastsRepo } from "../src/repos/broadcasts.js";
 
@@ -163,5 +165,81 @@ describe("broadcasts", () => {
     expect(broadcastsRepo.endStale(90_000)).toBe(0);
     const live = await request(app).get("/api/broadcasts/live");
     expect(live.body.broadcasts).toHaveLength(1);
+  });
+  it("the stats heartbeat does not consume the broadcast-start rate budget", async () => {
+    // Regression guard: the start limiter is mounted on the "/api/broadcasts"
+    // prefix, which also covers "/:id/stats" and "/:id/end". The host posts a
+    // heartbeat every 2 s (~1800/h), so a prefix-wide limiter used to exhaust
+    // the 60/h start budget within minutes — after which "Go live" AND "End
+    // broadcast" both returned 429.
+    const a = configureApp(express(), { rateLimiting: true, quiet: true });
+    const t = await token(a);
+    const started = await request(a).post("/api/broadcasts").set(auth(t)).send({
+      title: "Long cast",
+      access: "public",
+      source: "tab",
+      peerId: "p1",
+    });
+    expect(started.status).toBe(201);
+    const id = started.body.broadcast.id as string;
+
+    const stats = {
+      stats: {
+        viewers: 1,
+        bitrateKbps: 500,
+        fps: 30,
+        width: 1280,
+        height: 720,
+      },
+    };
+    for (let i = 0; i < 120; i++) {
+      const r = await request(a)
+        .post(`/api/broadcasts/${id}/stats`)
+        .set(auth(t))
+        .send(stats);
+      expect(r.status).toBe(200); // never throttled
+    }
+
+    // Stopping must still work after 120 heartbeats...
+    const ended = await request(a)
+      .post(`/api/broadcasts/${id}/end`)
+      .set(auth(t));
+    expect(ended.status).toBe(200);
+
+    // ...and the start budget is still full (1 spent of 60).
+    for (let i = 0; i < 59; i++) {
+      const r = await request(a)
+        .post("/api/broadcasts")
+        .set(auth(t))
+        .send({
+          title: `Spam ${i}`,
+          access: "public",
+          source: "tab",
+          peerId: `s${i}`,
+        });
+      expect(r.status).toBe(201);
+    }
+    const blocked = await request(a).post("/api/broadcasts").set(auth(t)).send({
+      title: "One too many",
+      access: "public",
+      source: "tab",
+      peerId: "z",
+    });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe("RATE_LIMITED");
+  });
+
+  it("does not throttle POST /api/broadcasts GET traffic", async () => {
+    const a = configureApp(express(), { rateLimiting: true, quiet: true });
+    const t = await token(a);
+    await request(a)
+      .post("/api/broadcasts")
+      .set(auth(t))
+      .send({ title: "Live", access: "public", source: "tab", peerId: "p1" });
+    // The landing page polls /api/broadcasts/live every few seconds.
+    for (let i = 0; i < 100; i++) {
+      const r = await request(a).get("/api/broadcasts/live");
+      expect(r.status).toBe(200);
+    }
   });
 });

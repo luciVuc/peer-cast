@@ -1,11 +1,7 @@
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import express, {
-  type Express,
-  type Request,
-  type RequestHandler,
-} from "express";
+import express, { type Express, type Request } from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type { Server } from "node:http";
@@ -289,13 +285,19 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     app.use("/api/recordings", mkLim("rec-create-ip", 60 * 60_000, 20));
     // Going live: 60/h per IP. POST /api/broadcasts writes a row and fans a
     // push notification out to every follower, so without a ceiling a tight
-    // start/end loop grows the table and mailboxes for free. Generous enough
-    // for many broadcasters behind one NAT, tight enough to stop spam.
-    const onlyPost =
-      (mw: RequestHandler): RequestHandler =>
-      (req, res, next) =>
-        req.method === "POST" ? mw(req, res, next) : next();
-    app.use("/api/broadcasts", onlyPost(mkLim("bstart-ip", 60 * 60_000, 60)));
+    // start/end loop grows the table and mailboxes for free.
+    //
+    // Scope this to the start endpoint EXACTLY. `app.use` is a prefix mount, so
+    // a bare POST check would also swallow `/api/broadcasts/:id/stats` (the
+    // host heartbeat, one every 2 s ≈ 1800/h) and `/api/broadcasts/:id/end`,
+    // which would exhaust the start budget within minutes of going live — and
+    // leave the broadcaster unable to stop. Inside a mount, `req.path` is
+    // relative to it, so the collection route is "/".
+    const bstartLim = mkLim("bstart-ip", 60 * 60_000, 60);
+    app.use("/api/broadcasts", (req, res, next) => {
+      if (req.method !== "POST" || req.path !== "/") return next();
+      return bstartLim(req, res, next);
+    });
   }
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
