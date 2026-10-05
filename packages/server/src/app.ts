@@ -11,6 +11,7 @@ import { RedisStore, type RedisReply } from "rate-limit-redis";
 import { config } from "./config.js";
 import { getRedis } from "./lib/redis.js";
 import { errorHandler } from "./middleware/error.js";
+import { optionalAuth } from "./middleware/auth.js";
 import { csrfGuard } from "./middleware/csrf.js";
 import { avatarDir } from "./lib/avatar.js";
 import { authRouter } from "./routes/auth.js";
@@ -166,6 +167,10 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
       /** Only count failed requests for this limiter (prevents a successful
        *  login/logout loop from locking a legitimate user/email out). */
       skipSuccessful = false,
+      /** Full control over what reaches the counter at all. Evaluated BEFORE
+       *  the route handler runs, so it can only inspect the request — the
+       *  status-code half is what skipSuccessfulRequests is for. */
+      skip?: (req: Request) => boolean,
     ) => {
       const redis = getRedis();
       const store = redis
@@ -184,6 +189,7 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
         legacyHeaders: false,
         store,
         skipSuccessfulRequests: skipSuccessful,
+        skip,
         keyGenerator: keyFn ?? ((req) => ipKeyGenerator(req.ip ?? "unknown")),
         handler: (_req, res) =>
           res.status(429).json({
@@ -243,12 +249,72 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
         (req) => `ce:${String(req.body?.newEmail ?? "").toLowerCase()}`,
       ),
     );
-    // Session resolve: 120/15 min per IP.  Viewers may reconnect legitimately
-    // after network drops; exponential backoff in ViewerPage prevents storms,
-    // but give enough headroom so a normal session never hits the limit.
-    app.use("/api/sessions", mkLim("session-ip", 15 * 60_000, 120));
-    // Code-gated session resolves: 5 wrong codes / 15 min per (IP + username).
-    // Only counts failed (non-2xx) responses so correct codes don't burn the budget.
+    // Populate req.auth BEFORE the limiters below so they can key per user.
+    //
+    // `optionalAuth` is normally attached inside the route handler, which runs
+    // *after* any app-level middleware — so a limiter mounted ahead of the
+    // router sees no identity and silently falls back to IP keying for every
+    // request, logged-in or not. It never blocks, so running it here is safe,
+    // and the route's own use is idempotent. Cost is one JWT verify + one
+    // indexed SQLite row read per request (the same read the route would do
+    // anyway).
+    app.use("/api/sessions", optionalAuth);
+    // Session resolve: viewer-facing, read-only, and hit by *every* viewer of a
+    // broadcast — plus again on every reconnect (ViewerPage re-resolves, and
+    // during a host restart its bounded backoff polls ~13 times).
+    //
+    // Keyed per authenticated user, falling back to IP. Keying this on IP alone
+    // put every viewer behind one NAT (home router, office, corporate proxy)
+    // into a single shared budget, so a busy instance locked out an entire
+    // egress IP at once. `usernameLc` is the canonical key, so "Alice" and
+    // "alice" can't be used to obtain two budgets for one account.
+    //
+    // 600/15 min ≈ 40/min: comfortably above real reconnect churn, still a
+    // ceiling on abuse of a cheap endpoint. Access-code guessing — the one
+    // genuinely guessable thing here — is bounded separately and far tighter by
+    // the code-attempt limiter below.
+    app.use(
+      "/api/sessions",
+      mkLim(
+        "session",
+        15 * 60_000,
+        600,
+        (req) =>
+          req.auth
+            ? `u:${req.auth.usernameLc}`
+            : `ip:${ipKeyGenerator(req.ip ?? "unknown")}`,
+        false,
+        // Ticket verification gets its own bucket below — its volume tracks
+        // the host's audience size, not any one client's request rate, so it
+        // must not compete with viewers resolving sessions.
+        (req) => req.path === "/verify-ticket",
+      ),
+    );
+    // Ticket verification: called by the HOST once per incoming viewer call, so
+    // its volume scales with the audience rather than with one client. It needs
+    // real headroom for that reason — and it is unauthenticated, so it can only
+    // be keyed by IP. Exhausting a host's budget here is worse than a plain
+    // 429: hosts fail closed on an unverifiable ticket (AGENTS rule 4), so the
+    // audience would be silently refused rather than shown an error.
+    app.use(
+      "/api/sessions/verify-ticket",
+      mkLim("ticket-verify-ip", 15 * 60_000, 1500),
+    );
+    // Code-gated resolves: 5 wrong codes / 15 min per (IP + username).
+    //
+    // Counts ONLY non-2xx responses to requests that actually supplied a code.
+    // Previously every non-2xx counted, including "host is offline" (404) — so a
+    // viewer reconnecting to an ended broadcast burned this 5/15 min budget and
+    // then got 429 on a *public* stream that never had a code gate at all. A
+    // 404 with no code is not a failed code attempt.
+    //
+    // A 404 or 401 that *does* carry a code still counts: probing for a valid
+    // username with codes is exactly the guessing this limiter exists to stop.
+    //
+    // Note: `skip` is evaluated BEFORE the route handler runs (express-rate-limit
+    // calls it on the way in), so it can only inspect the request — the
+    // status-code half is handled by skipSuccessfulRequests, which decrements
+    // after the response. Don't try to read res.statusCode from `skip`.
     app.use(
       "/api/sessions",
       mkLim(
@@ -256,17 +322,16 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
         15 * 60_000,
         5,
         (req) => {
-          const code = String(
-            (req.query as Record<string, string>)?.code ?? "",
-          );
-          if (!code) return `code:noop:${ipKeyGenerator(req.ip ?? "unknown")}`;
           const username =
             (req.params as Record<string, string>)?.username ??
             req.path.split("/")[1] ??
             "";
           return `code:${username.toLowerCase()}:${ipKeyGenerator(req.ip ?? "unknown")}`;
         },
-        true, // only count failed responses
+        true, // only count non-2xx (see note above)
+        (req) =>
+          // Nothing supplied a code — nothing to guess, never counts.
+          !String((req.query as Record<string, string>)?.code ?? ""),
       ),
     );
     // Reports: 10/h per IP.

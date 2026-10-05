@@ -102,7 +102,7 @@ npm run dev:web          # Vite dev server, :5173 (proxies /api + /peerjs)
 
 npm -w @peer-cast/extension run check   # node --check all extension JS
 
-npm test                 # server + web unit tests (Vitest, 123 tests)
+npm test                 # server + web unit tests (Vitest, 129 tests)
 npm run test:e2e         # full build + Playwright E2E (5 tests)
 npm -w @peer-cast/e2e run install-browser   # one-time: download Playwright browser
 
@@ -239,6 +239,25 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     back to zero — strict reuse detection signs multi-tab users out of every
     session at once, which is the bug the window exists to prevent.
 
+22. **Rate limits are sized for the endpoint's real traffic, keyed per user when
+    possible.** `app.use` is a prefix mount, so a limiter mounted on a path
+    silently covers every sub-route under it — two limiters got mis-scoped this
+    way (`/api/broadcasts` swallowed the 2 s `stats` heartbeat, `/api/sessions`
+    swallowed `verify-ticket`). Scope with an explicit method + `req.path` test
+    (relative to the mount) rather than assuming the mount means one endpoint.
+    Beyond that:
+    - **Key viewer-facing endpoints per authenticated user, falling back to IP.**
+      Keying on IP alone puts every viewer behind one NAT into a single shared
+      budget, so a busy instance locks out a whole egress IP at once.
+    - **Split by whose traffic it is.** A host's `verify-ticket` volume scales
+      with its audience, not with any client's rate, so it must not share a
+      bucket with viewers resolving sessions.
+    - **Tight limits only on guessable things.** Code guessing is the one
+      genuinely abusable input to `GET /api/sessions/:username`; keep that at
+      5/15 min and never count a request that supplied no code toward it.
+    - `skip` runs BEFORE the handler, so it cannot read `res.statusCode` — use
+      `skipSuccessfulRequests` for the status half.
+
 ## Data model (SQLite — `packages/server/src/db/index.ts`)
 
 Tables are created with `CREATE TABLE IF NOT EXISTS`. Missing columns on
@@ -278,7 +297,7 @@ types together.
 
 - [ ] `npm run build` succeeds (shared → web → server).
 - [ ] `npm run typecheck` clean for all three TS packages.
-- [ ] `npm test` green — 94 server tests + 29 web tests.
+- [ ] `npm test` green — 100 server tests + 29 web tests.
 - [ ] `npm run check:versions` green (version SSOT).
 - [ ] `npm run test:e2e` green — 5 Playwright tests (UI, WebRTC, moderation).
 - [ ] `npm -w @peer-cast/extension run check` passes.
@@ -288,6 +307,10 @@ types together.
 - [ ] Access gates: anon resolve of members/code broadcast → 401/403 + no peerId;
       authed resolve → peerId + ticket; `verify-ticket` ok only for matching
       peerId. (`test/access.test.ts`)
+- [ ] Rate limits: viewer resolves are never throttled by ordinary watching,
+      reconnect polling, or a co-located viewer behind the same IP; verified
+      access-code guessing still trips. (`test/session-rate-limit.test.ts`,
+      `test/broadcasts.test.ts`)
 - [ ] `peerId` absent from `/broadcasts/live`, `/users/search`, `/users/:u`.
 - [ ] Moderation: ban blocks login/announce + force-ends live + evicts at WS
       upgrade; admin routes 403 for non-admins; reports create/resolve; invite

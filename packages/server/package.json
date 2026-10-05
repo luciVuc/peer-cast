@@ -1,6 +1,6 @@
 {
   "name": "@peer-cast/server",
-  "version": "1.1.12",
+  "version": "1.1.13",
   "private": true,
   "license": "MIT",
   "type": "module",
