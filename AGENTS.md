@@ -102,7 +102,7 @@ npm run dev:web          # Vite dev server, :5173 (proxies /api + /peerjs)
 
 npm -w @peer-cast/extension run check   # node --check all extension JS
 
-npm test                 # server + web unit tests (Vitest, 118 tests)
+npm test                 # server + web unit tests (Vitest, 123 tests)
 npm run test:e2e         # full build + Playwright E2E (5 tests)
 npm -w @peer-cast/e2e run install-browser   # one-time: download Playwright browser
 
@@ -268,7 +268,7 @@ types together.
 
 - [ ] `npm run build` succeeds (shared → web → server).
 - [ ] `npm run typecheck` clean for all three TS packages.
-- [ ] `npm test` green — 92 server tests + 26 web tests.
+- [ ] `npm test` green — 94 server tests + 29 web tests.
 - [ ] `npm run check:versions` green (version SSOT).
 - [ ] `npm run test:e2e` green — 5 Playwright tests (UI, WebRTC, moderation).
 - [ ] `npm -w @peer-cast/extension run check` passes.

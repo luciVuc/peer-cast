@@ -32,6 +32,16 @@ type Phase =
   | "playing"
   | "error";
 
+/**
+ * How long the viewer keeps auto-retrying after a stream drops. A host
+ * restarting normally takes seconds, so a generous window covers the real case
+ * — but an open tab must never poll forever: `/api/sessions` is rate limited,
+ * so an unbounded loop would eventually spend that budget on a host that may
+ * never return, then strand the viewer on a hard 429. Once the window is spent
+ * we stop and leave the Retry button to the user.
+ */
+const RETRY_WINDOW_MS = 5 * 60_000;
+
 export function ViewerPage() {
   const { username = "" } = useParams();
   const { data: cfg } = useGetConfigQuery();
@@ -53,6 +63,13 @@ export function ViewerPage() {
   const reconnectDelay = useRef(3000);
   /** Last access code that successfully resolved, so reconnects re-send it. */
   const lastCodeRef = useRef<string | null>(null);
+  /** True once we have actually received media for this username. Distinguishes
+   *  "the stream I was watching dropped" (keep polling for the host to come
+   *  back) from "I arrived and nobody is live" (stay put, retry manually). */
+  const wasLiveRef = useRef(false);
+  /** Deadline for the current auto-retry window (see RETRY_WINDOW_MS). Reset
+   *  whenever we receive media or the user asks for a fresh resolve. */
+  const retryDeadlineRef = useRef(0);
   /** True once the component has unmounted — stops any in-flight reconnects. */
   const disposedRef = useRef(false);
   /** Guards against duplicate initial resolves (React 18 StrictMode double-invoke). */
@@ -82,6 +99,29 @@ export function ViewerPage() {
   }
 
   /**
+   * Re-resolve after the current backoff delay (3 s, doubling to a 30 s cap).
+   * Reconnects re-send the last access code so a members/code stream doesn't
+   * bounce back to the code prompt. Idempotent — clears any pending timer so a
+   * manual Retry plus an armed timer can't stack up duplicate polls.
+   *
+   * A no-op once RETRY_WINDOW_MS is spent, which is what stops this loop from
+   * polling forever. Deliberately does NOT touch `phase`: the caller decides
+   * what the user sees while we wait (a spinner for an expected drop, the
+   * "isn't live" message when the host is genuinely offline).
+   */
+  function scheduleReconnect() {
+    if (disposedRef.current) return;
+    if (Date.now() >= retryDeadlineRef.current) return;
+    const delay = reconnectDelay.current;
+    reconnectDelay.current = Math.min(delay * 2, 30_000);
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = window.setTimeout(
+      () => void resolve(lastCodeRef.current ?? undefined, true),
+      delay,
+    );
+  }
+
+  /**
    * Establish the P2P connection imperatively (NOT via a React effect, so a
    * re-render / StrictMode re-invoke / phase change can never tear down a
    * live peer mid-negotiation).  Called from resolve() once a peerId is known.
@@ -106,7 +146,10 @@ export function ViewerPage() {
           videoRef.current.srcObject = stream;
           void videoRef.current.play().catch(() => {});
         }
+        wasLiveRef.current = true;
         reconnectDelay.current = 3000; // successful stream — reset backoff
+        // A fresh stream means a fresh outage can be waited out.
+        retryDeadlineRef.current = Date.now() + RETRY_WINDOW_MS;
         setPhase("playing");
       },
       onError: (err) => {
@@ -119,13 +162,8 @@ export function ViewerPage() {
         // Connection dropped. Ignore if this handle was already replaced or the
         // component is gone.  Otherwise re-resolve with exponential backoff.
         if (disposedRef.current || handleRef.current !== handle) return;
-        const delay = reconnectDelay.current;
-        reconnectDelay.current = Math.min(delay * 2, 30_000);
         setPhase("resolving");
-        reconnectTimer.current = window.setTimeout(
-          () => void resolve(lastCodeRef.current ?? undefined),
-          delay,
-        );
+        scheduleReconnect();
       },
       onChat: (msg) => setChat((prev) => [...prev.slice(-199), msg]),
     });
@@ -133,17 +171,34 @@ export function ViewerPage() {
   }
 
   // Resolve the session (optionally with an access code), then connect.
-  async function resolve(withCode?: string) {
+  // `background` keeps the current message on screen while we poll — used by
+  // the auto-retry loop so a viewer waiting on a host who is restarting isn't
+  // flashed with a spinner on every attempt.
+  async function resolve(withCode?: string, background = false) {
     if (disposedRef.current || resolvingRef.current) return;
     resolvingRef.current = true;
     try {
-      setPhase("resolving");
+      if (!background) {
+        setPhase("resolving");
+        // A user-initiated resolve (first load or Retry) always gets a full
+        // auto-retry window from here.
+        retryDeadlineRef.current = Date.now() + RETRY_WINDOW_MS;
+      }
       const res = await trigger({ username, code: withCode });
       if (disposedRef.current) return;
       if (res.error) {
         const status = (res.error as { status?: number }).status;
-        if (status === 404) setPhase("offline");
-        else if (status === 401) setPhase(authed ? "need-code" : "need-auth");
+        if (status === 404) {
+          setPhase("offline");
+          // If we were watching a stream that just dropped, the host is free to
+          // go live again at any moment — keep polling (quietly, backing off to
+          // 30 s) so the viewer reconnects on its own instead of being stranded
+          // on a dead "not live" screen. A viewer who arrived to an offline host
+          // (wasLiveRef === false) stays put and uses the Retry button.
+          if (wasLiveRef.current) scheduleReconnect();
+          return;
+        }
+        if (status === 401) setPhase(authed ? "need-code" : "need-auth");
         else if (status === 403) {
           setPhase("need-code");
           setErrMsg("Incorrect access code.");
@@ -185,6 +240,10 @@ export function ViewerPage() {
       disposedRef.current = true;
       startedRef.current = false;
       resolvingRef.current = false;
+      // A different username is a different host — don't inherit its "keep
+      // polling" state.
+      wasLiveRef.current = false;
+      retryDeadlineRef.current = 0;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       teardown();
     };
