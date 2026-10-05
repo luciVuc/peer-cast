@@ -4,13 +4,10 @@ Broadcast a browser tab or your whole screen to anyone, **peer-to-peer over
 WebRTC**. Media flows directly viewer↔broadcaster — only a tiny signaling
 handshake touches a server.
 
-This is the **self-hosted, Node.js edition** (v2). The entire stack — REST API,
-PeerJS signaling, SQLite storage, and the installable PWA — runs from a single
-Node process you can host anywhere: a VPS, a Docker/Podman container, an old
-laptop, or a Raspberry Pi. No Cloudflare, no third-party services required.
-
-> Looking for the original Cloudflare-Workers edition? It lives on the
-> `serverless` branch.
+The entire stack — REST API, PeerJS signaling, SQLite storage, and the
+installable PWA — runs from a single Node process you can host anywhere: a
+VPS, a Docker/Podman container, an old laptop, or a Raspberry Pi. No Cloudflare,
+no third-party services required.
 
 ---
 
@@ -534,7 +531,7 @@ Verification flow:
 ## Moderation in a peer-to-peer system
 
 Media flows **directly host↔viewer over WebRTC** — the server never sees a
-frame or audio sample, and v2 keeps no recording. **Content moderation in the
+frame or audio sample, and PeerCast keeps no recording. **Content moderation in the
 "scan what's on screen" sense is architecturally impossible.** That is the
 deliberate privacy trade-off of true P2P.
 
@@ -802,7 +799,7 @@ npm -w @peer-cast/e2e run install-browser
 ### Releasing a new version
 
 ```bash
-npm version 1.2.0        # bumps root package.json + mirrors into all carriers
+npm version patch        # bumps root package.json + mirrors into all carriers
 ```
 
 npm only rewrites the root manifest, so a `version` lifecycle hook
@@ -867,7 +864,7 @@ npm -w @peer-cast/extension run check   # node --check all extension JS files
 - **System audio** on screen/window capture depends on the OS and browser. Windows
   full-screen mode typically works; macOS window capture is video-only.
 - **Symmetric NAT** requires a TURN server (see above).
-- **Recording / replay** is not implemented in v2 — broadcast history stores
+- **Recording / replay** is not implemented — broadcast history stores
   metadata and stats only. See `ROADMAP.md`.
 - **WebRTC exposes participant IPs.** In direct P2P mode both parties' IP
   addresses are visible to each other. Force relay-only mode (`iceTransportPolicy:
@@ -875,9 +872,8 @@ npm -w @peer-cast/extension run check   # node --check all extension JS files
 
 ---
 
-See `AGENTS.md` for contributor conventions, `ROADMAP.md` for what's planned,
-and `CRYPTO.md` for the original cryptographic-ownership design (historical,
-superseded in v2 by the registry-backed identity model).
+See `AGENTS.md` for contributor conventions and `ROADMAP.md` for what's
+planned.
 
 ---
 

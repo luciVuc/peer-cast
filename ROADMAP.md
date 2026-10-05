@@ -2,10 +2,9 @@
 
 _Legend: ✅ done · 🚧 in progress · ⬜ planned_
 
-This roadmap reflects the **`webapp-nodejs` branch** (current release), the self-hosted
-Node.js + React PWA rewrite.
+This roadmap tracks the self-hosted Node.js + React PWA app.
 
-_Last updated from the `AUDIT_REPORT_3.md` comprehensive audit (June 2025, v1.1.6)._
+_Last updated from the `AUDIT_REPORT_3.md` comprehensive audit (June 2025)._
 
 ---
 
@@ -1438,7 +1437,7 @@ Carried forward from previous audits. See `AUDIT_REPORT.md` for full context.
 - DRM content (Netflix etc.) refuses `tabCapture` — by browser design.
 - System audio on screen/window capture depends on OS/browser support.
 - Symmetric NAT requires a TURN server (`ICE_SERVERS`).
-- The free PeerJS cloud is replaced by self-hosted signaling; no cloud fallback in v2.
+- Signaling is self-hosted; there is no cloud signaling fallback.
 - Pure P2P fan-out realistically supports 5–15 concurrent viewers per broadcaster
   (CPU/bandwidth-bound). See FEAT-6 (SFU) for the scaling path.
 - P2P chat is ephemeral and unmoderated by design (rendezvous-only model). See

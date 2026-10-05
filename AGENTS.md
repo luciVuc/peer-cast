@@ -1,16 +1,13 @@
-# AGENTS.md — PeerCast (Node.js edition, v2)
+# AGENTS.md — PeerCast
 
-Guidance for AI agents (and humans) working on the **`webapp-nodejs`** branch.
+Guidance for AI agents (and humans) working on PeerCast.
 
 ## What this is
 
-A self-hosted, Cloudflare-independent rewrite of PeerCast. Everything runs on
+A self-hosted, Cloudflare-independent P2P broadcasting app. Everything runs on
 Node.js: REST API, PeerJS signaling, SQLite storage, and the installable React
 PWA — served from one process, deployable via Docker/Podman or bare Node on any
 device (VPS, laptop, Raspberry Pi).
-
-> The original Cloudflare-Workers edition is preserved on the `serverless`
-> branch. Do not port Workers/D1/KV concepts back here.
 
 ## Monorepo layout
 
