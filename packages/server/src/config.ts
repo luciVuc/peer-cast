@@ -149,6 +149,11 @@ export const config = {
     pass: str("SMTP_PASS", ""),
     from: str("SMTP_FROM", `PeerCast <noreply@peercast.local>`),
     enabled: !!str("SMTP_HOST", ""),
+    /** Redact `?token=` / `?code=` values in the stdout fallback. Off by
+     * default: with no SMTP the log IS the delivery channel, so redacting
+     * makes verification and password reset unusable. Turn it on only when
+     * logs are shipped somewhere less trusted than the server itself. */
+    redactLinks: bool("EMAIL_REDACT_LINKS", false),
   },
 
   /** Whether to hard-block login for unverified emails. */

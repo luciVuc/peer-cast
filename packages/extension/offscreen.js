@@ -255,8 +255,50 @@ function stopBitrateMonitor() {
 }
 
 /**
- * Answer an incoming viewer call with the captured stream, after checking
- * the optional access code carried in the call metadata.
+ * Politely refuse an incoming call and tell the viewer why over a short-lived
+ * data connection, so a gated viewer gets an explicit refusal instead of
+ * hanging on a connection that will never carry media.
+ * @param {MediaConnection} call
+ * @param {string} rejection Machine-readable reason echoed to the viewer.
+ * @param {string} warning Presenter-facing sentence (declines are counted).
+ */
+function declineCall(call, rejection, warning) {
+  declinedViewers++;
+  dbg("declining call from", call.peer, `(${rejection})`);
+  setState({
+    lastWarning:
+      warning + (declinedViewers > 1 ? ` (${declinedViewers} so far).` : "."),
+  });
+  // Closing pre-answer leaves PeerJS on the viewer side in limbo: it can
+  // emit remnant stream events that look like real media, sending gated
+  // viewers into an endless reconnect loop. Tell them explicitly over a
+  // tiny data connection so they can surface the refusal instead.
+  try {
+    const rej = peer.connect(call.peer, {
+      metadata: { rejection },
+    });
+    setTimeout(() => {
+      try {
+        rej.close();
+      } catch {
+        /* already gone */
+      }
+    }, 5000);
+  } catch (err) {
+    dbg("rejection signal failed:", err?.message || err);
+  }
+  try {
+    call.close();
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * Answer an incoming viewer call with the captured stream — but only after
+ * every access gate has passed. Media must never be attached before the
+ * backend-issued ticket is proven, because `call.answer(stream)` starts
+ * sending frames to the caller immediately.
  * @param {MediaConnection} call
  */
 async function answerCall(call) {
@@ -264,53 +306,19 @@ async function answerCall(call) {
     dbg("call from", call.peer, "ignored — no stream");
     return;
   }
-  if (accessKey && call.metadata?.token !== accessKey) {
-    declinedViewers++;
-    dbg("declining call from", call.peer, "(bad/missing access code)");
-    setState({
-      lastWarning:
-        "Declined a viewer without the correct access code" +
-        (declinedViewers > 1 ? ` (${declinedViewers} so far).` : "."),
-    });
-    // Closing pre-answer leaves PeerJS on the viewer side in limbo: it can
-    // emit remnant stream events that look like real media, sending gated
-    // viewers into an endless reconnect loop. Tell them explicitly over a
-    // tiny data connection so they can surface the refusal instead.
-    try {
-      const rej = peer.connect(call.peer, {
-        metadata: { rejection: "bad-token" },
-      });
-      setTimeout(() => {
-        try {
-          rej.close();
-        } catch {
-          /* already gone */
-        }
-      }, 5000);
-    } catch (err) {
-      dbg("rejection signal failed:", err?.message || err);
-    }
-    try {
-      call.close();
-    } catch {
-      /* already gone */
-    }
-    return;
-  }
-  dbg("answering call from", call.peer);
-  calls.add(call);
-  totalConnections++;
-  // `stream` may be replaced by null during teardown; bind what we have now.
-  call.answer(stream);
 
   // Wire event handlers immediately (before any async work) so we never miss
-  // close/error/state-change events while the proof round-trip is in flight.
+  // close/error/state-change events while the ticket round-trip is in flight,
+  // and so a call that dies mid-verification is never answered afterwards.
+  let live = true;
   call.on("close", () => {
+    live = false;
     dbg("call closed by", call.peer);
     calls.delete(call);
     reportViewerCount();
   });
   call.on("error", (err) => {
+    live = false;
     dbg("call error from", call.peer, err?.type || "", err?.message || "");
     calls.delete(call);
     reportViewerCount();
@@ -320,15 +328,36 @@ async function answerCall(call) {
     const state = call.peerConnection?.connectionState;
     dbg("pc state", call.peer, state);
     if (state === "failed" || state === "closed") {
+      live = false;
       calls.delete(call);
     }
     reportViewerCount();
   });
 
-  // For non-public broadcasts, verify the viewer's backend-issued ticket. This is
-  // an independent host-side check: even if a viewer obtained the peer id
-  // out-of-band, they still cannot join without a valid ticket.
-  if (accessPolicy !== "public" && serverUrl) {
+  if (accessKey && call.metadata?.token !== accessKey) {
+    declineCall(
+      call,
+      "bad-token",
+      "Declined a viewer without the correct access code",
+    );
+    return;
+  }
+
+  // Non-public broadcasts must clear a backend-issued ticket BEFORE any media
+  // is attached. This is an independent host-side check: even if a viewer got
+  // the peer id out-of-band they still cannot join without a valid ticket, and
+  // answering first would hand them the broadcast in the meantime.
+  if (accessPolicy !== "public") {
+    if (!serverUrl) {
+      // Fail closed. Without a server URL we cannot prove a ticket, so a gated
+      // broadcast must never answer — better a viewer error than a leak.
+      declineCall(
+        call,
+        "authentication-required",
+        "Declined a viewer because this session lost its server connection",
+      );
+      return;
+    }
     const ticket = call.metadata?.ticket;
     let allowed = false;
     try {
@@ -338,35 +367,26 @@ async function answerCall(call) {
       dbg("ticket verification failed:", err?.message || err);
     }
     if (!allowed) {
-      declinedViewers++;
-      dbg("declining call from", call.peer, "(no valid access ticket)");
-      setState({
-        lastWarning:
-          "Declined a viewer without a valid access ticket" +
-          (declinedViewers > 1 ? ` (${declinedViewers} so far).` : "."),
-      });
-      try {
-        const rej = peer.connect(call.peer, {
-          metadata: { rejection: "authentication-required" },
-        });
-        setTimeout(() => {
-          try {
-            rej.close();
-          } catch {
-            /* already gone */
-          }
-        }, 5000);
-      } catch (err) {
-        dbg("rejection signal failed:", err?.message || err);
-      }
-      try {
-        call.close();
-      } catch {
-        /* already gone */
-      }
+      declineCall(
+        call,
+        "authentication-required",
+        "Declined a viewer without a valid access ticket",
+      );
       return;
     }
   }
+
+  // Teardown may have landed (or the caller hung up) during the await above.
+  // `stream` is nulled by teardownLocal(), so re-check before answering.
+  if (!live || !stream) {
+    dbg("call from", call.peer, "ignored — ended before it could be answered");
+    return;
+  }
+
+  dbg("answering call from", call.peer);
+  calls.add(call);
+  totalConnections++;
+  call.answer(stream);
 }
 
 /**

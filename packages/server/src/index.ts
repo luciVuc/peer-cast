@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { purgeExpired } from "./lib/auth.js";
 import { shutdownRedis } from "./lib/redis.js";
 import { broadcastsRepo } from "./repos/broadcasts.js";
+import { emailTokensRepo } from "./repos/emailTokens.js";
 import { migrateAvatars } from "./db/index.js";
 
 const app = express();
@@ -15,6 +16,10 @@ configureApp(app, { httpServer });
 // ─── Housekeeping ──────────────────────────────────────────────────────
 function housekeeping(): void {
   purgeExpired();
+  // Verification / reset / email-change tokens are bearer credentials. Nothing
+  // consumes them past their TTL, so drop them on the same cadence as the auth
+  // tables rather than letting them accumulate indefinitely.
+  emailTokensRepo.purgeExpired();
   // Force-end broadcasts whose host went silent (closed tab, crash, lost
   // network) so they don't ghost the dashboard / discovery.
   const ended = broadcastsRepo.endStale(config.staleLiveMs);

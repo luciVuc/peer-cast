@@ -5,6 +5,7 @@ import { configureApp } from "../src/app.js";
 import { extractRtCookie, makeApp, resetDb, validUser } from "./helpers.js";
 import { config } from "../src/config.js";
 import { emailTokensRepo } from "../src/repos/emailTokens.js";
+import { sendEmail } from "../src/lib/email.js";
 import { usersRepo } from "../src/repos/users.js";
 
 const app = makeApp();
@@ -376,5 +377,49 @@ describe("email rate limits (rate limiting enabled)", () => {
       .post("/api/auth/change-email")
       .send({ newEmail: "a@example.com", currentPassword: "x" });
     expect(blocked.status).toBe(429);
+  });
+});
+
+describe("stdout email fallback", () => {
+  it("logs the recovery link intact when SMTP is unconfigured", async () => {
+    // With no SMTP_HOST the log IS the delivery channel, so a redacted token
+    // would make verification and password reset impossible to complete.
+    expect(config.email.enabled).toBe(false);
+
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await sendEmail({
+        to: "alice@example.com",
+        subject: "Reset your password",
+        html: "<p>reset</p>",
+        text: "Reset here: https://pc.example.com/reset?token=super-secret-token",
+      });
+      const out = spy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(out).toContain("super-secret-token");
+      expect(out).not.toContain("[redacted]");
+      expect(out).toContain("alice@example.com");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("redacts the token when EMAIL_REDACT_LINKS is enabled", async () => {
+    const prev = config.email.redactLinks;
+    config.email.redactLinks = true;
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await sendEmail({
+        to: "alice@example.com",
+        subject: "Reset your password",
+        html: "<p>reset</p>",
+        text: "Reset here: https://pc.example.com/reset?token=super-secret-token",
+      });
+      const out = spy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(out).toContain("[redacted]");
+      expect(out).not.toContain("super-secret-token");
+    } finally {
+      config.email.redactLinks = prev;
+      spy.mockRestore();
+    }
   });
 });

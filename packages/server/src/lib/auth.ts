@@ -79,14 +79,27 @@ export function issueRefreshToken(usernameLc: string, family?: string): string {
 }
 
 /**
+ * How long after a rotation a replayed refresh token is treated as a benign
+ * concurrent refresh rather than a credential replay.
+ *
+ * The refresh cookie is per-browser, but every tab of the PWA shares it. When a
+ * broadcaster has the app open in two tabs and both hit an expired access token
+ * at once, both POST /auth/refresh with the *same* cookie. Under strict reuse
+ * detection the second request looks exactly like a stolen token, so the whole
+ * family is revoked and the user is silently signed out of every tab. A short
+ * grace window keeps a genuine late replay (the actual theft signal) fatal.
+ */
+const ROTATION_GRACE_MS = 15_000;
+
+/**
  * Rotate a refresh token. The token is not deleted on use — it is marked
  * `consumed_at` so replay is observable. Returns the account (and token
- * family) to continue the session, or null on invalid/expired/consumed input.
+ * family) to continue the session, or null on invalid/expired input.
  *
- * Reuse detection: presenting an already-consumed token is the classic
- * token-theft signal, so the entire family is revoked (all sessions on that
- * login's rotation chain are killed; the victim re-authenticates with the
- * password). Expired tokens are also treated as fatal to the family.
+ * Reuse detection: presenting an already-consumed token outside
+ * ROTATION_GRACE_MS is the classic token-theft signal, so the entire family is
+ * revoked (all rotations of that login's chain die; the victim re-authenticates
+ * with the password). Expired tokens are also treated as fatal to the family.
  */
 export function consumeRefreshToken(token: string): {
   usernameLc: string;
@@ -109,9 +122,21 @@ export function consumeRefreshToken(token: string): {
 
   if (!row) return null;
 
-  // An already-rotated token being presented again (or an expired one) ⇒
-  // someone replayed a credential. Nuke the whole session family.
-  if (row.consumed_at || row.expires_at < Date.now()) {
+  const now = Date.now();
+
+  if (row.consumed_at) {
+    // Replayed within the grace window: a sibling tab racing the same cookie,
+    // not a thief. Continue the family so the client stays signed in.
+    if (now - row.consumed_at <= ROTATION_GRACE_MS && row.family) {
+      return { usernameLc: row.username_lc, family: row.family };
+    }
+    if (row.family) {
+      db.prepare(`DELETE FROM refresh_tokens WHERE family = ?`).run(row.family);
+    }
+    return null;
+  }
+
+  if (row.expires_at < now) {
     if (row.family) {
       db.prepare(`DELETE FROM refresh_tokens WHERE family = ?`).run(row.family);
     }
@@ -120,7 +145,7 @@ export function consumeRefreshToken(token: string): {
 
   db.prepare(
     `UPDATE refresh_tokens SET consumed_at = ? WHERE token_hash = ?`,
-  ).run(Date.now(), hash);
+  ).run(now, hash);
 
   return { usernameLc: row.username_lc, family: row.family ?? "" };
 }

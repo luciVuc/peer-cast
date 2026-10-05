@@ -39,6 +39,9 @@ jobs:
       # shared → web → server
       - run: npm run build
       - run: npm run typecheck
+      # Version SSOT guard (AGENTS.md rule 13) — this used to drift silently
+      # because nothing in CI ran it.
+      - run: npm run check:versions
       - run: npm test
       - run: npm -w @peer-cast/extension run check
       - run: npx prettier --check .

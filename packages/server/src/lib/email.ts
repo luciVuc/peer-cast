@@ -35,19 +35,24 @@ export interface MailOptions {
 export async function sendEmail(opts: MailOptions): Promise<void> {
   const transport = getTransport();
   if (!transport) {
-    // Stdout fallback: useful in dev + single-operator self-hosted setups.
-    // Recovery links are bearer credentials; keep the fallback useful without
-    // putting live tokens into systemd/container logs.
-    const safeText = opts.text.replace(
-      /([?&](?:token|code)=)[^&\s]+/gi,
-      "$1[redacted]",
-    );
+    // Stdout fallback: with no SMTP the log IS the delivery channel, so the
+    // recovery link has to survive intact or verification/password-reset are
+    // unusable for dev and single-operator instances. Operators who need to
+    // ship logs somewhere less trusted than the server itself can set
+    // EMAIL_REDACT_LINKS=true to blank the token instead.
+    const body = config.email.redactLinks
+      ? opts.text.replace(/([?&](?:token|code)=)[^&\s]+/gi, "$1[redacted]")
+      : opts.text;
     console.log(
       `\n[email] ─────────────────────────────────────\n` +
         `To:      ${opts.to}\n` +
         `Subject: ${opts.subject}\n` +
+        (config.email.redactLinks
+          ? ""
+          : `Note:    SMTP unset — link below is the only delivery, and it ` +
+            `grants account access. Do not share these logs.\n`) +
         `─────────────────────────────────────────────\n` +
-        `${safeText}\n` +
+        `${body}\n` +
         `─────────────────────────────────────────────\n`,
     );
     return;

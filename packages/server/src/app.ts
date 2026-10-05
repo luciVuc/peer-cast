@@ -1,7 +1,11 @@
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import express, { type Express, type Request } from "express";
+import express, {
+  type Express,
+  type Request,
+  type RequestHandler,
+} from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type { Server } from "node:http";
@@ -283,6 +287,15 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     );
     // Creating recordings: 20/h per IP.
     app.use("/api/recordings", mkLim("rec-create-ip", 60 * 60_000, 20));
+    // Going live: 60/h per IP. POST /api/broadcasts writes a row and fans a
+    // push notification out to every follower, so without a ceiling a tight
+    // start/end loop grows the table and mailboxes for free. Generous enough
+    // for many broadcasters behind one NAT, tight enough to stop spam.
+    const onlyPost =
+      (mw: RequestHandler): RequestHandler =>
+      (req, res, next) =>
+        req.method === "POST" ? mw(req, res, next) : next();
+    app.use("/api/broadcasts", onlyPost(mkLim("bstart-ip", 60 * 60_000, 60)));
   }
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));

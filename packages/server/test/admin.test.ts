@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { makeApp, resetDb } from "./helpers.js";
+import { broadcastsRepo } from "../src/repos/broadcasts.js";
 
 const app = makeApp();
 
@@ -233,6 +234,53 @@ describe("reports", () => {
       .set(auth(token))
       .send({ targetUsername: "frank", reason: "testing self" });
     expect(self.status).toBe(400);
+  });
+
+  it("validates the optional broadcastId so report evidence cannot be forged", async () => {
+    await register(app, "erin");
+    await register(app, "victim");
+
+    // A well-formed report against a broadcast the target really owns.
+    const bc = broadcastsRepo.start({
+      usernameLc: "victim",
+      title: "Live",
+      description: null,
+      access: "public",
+      source: "tab",
+      peerId: "peer-victim",
+    });
+    const ok = await request(app).post("/api/reports").send({
+      targetUsername: "victim",
+      broadcastId: bc.id,
+      reason: "abusive stream",
+    });
+    expect(ok.status).toBe(201);
+    expect(ok.body.report.broadcastId).toBe(bc.id);
+
+    // A bogus id is a client error, not a 500 from the FK constraint.
+    const unknownBc = await request(app).post("/api/reports").send({
+      targetUsername: "victim",
+      broadcastId: "does-not-exist",
+      reason: "abusive stream",
+    });
+    expect(unknownBc.status).toBe(400);
+
+    // Someone else's broadcast cannot be pinned to this report.
+    const foreign = await request(app)
+      .post("/api/reports")
+      .send({
+        targetUsername: "victim",
+        broadcastId: broadcastsRepo.start({
+          usernameLc: "erin",
+          title: "Innocent",
+          description: null,
+          access: "public",
+          source: "tab",
+          peerId: "peer-erin",
+        }).id,
+        reason: "abusive stream",
+      });
+    expect(foreign.status).toBe(400);
   });
 
   it("returns aggregate metrics for admins and 403 for regular users", async () => {

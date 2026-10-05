@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import { createHash } from "node:crypto";
 import { makeApp, resetDb, validUser, extractRtCookie } from "./helpers.js";
+import { db } from "../src/db/index.js";
+
+const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 
 const app = makeApp();
 
@@ -80,7 +84,7 @@ describe("auth", () => {
     expect(nouser.status).toBe(401);
   });
 
-  it("rotates refresh tokens and revokes the whole family on reuse", async () => {
+  it("rotates refresh tokens and survives a concurrent replay from a sibling tab", async () => {
     const reg = await request(app).post("/api/auth/register").send(validUser);
     const cookie = extractRtCookie(reg);
 
@@ -94,7 +98,39 @@ describe("auth", () => {
     const newCookie = extractRtCookie(r1);
     expect(newCookie).toBeTruthy();
 
-    // Replaying an already-consumed token is a token-theft signal: the
+    // Two tabs of the PWA share one refresh cookie, so both can present the
+    // SAME token moments apart. That is a benign race, not theft: the session
+    // must survive, and the freshly issued token must keep working.
+    const replay = await request(app)
+      .post("/api/auth/refresh")
+      .set("Cookie", cookie);
+    expect(replay.status).toBe(200);
+    expect(replay.body.accessToken).toBeTruthy();
+    const familyAlive = await request(app)
+      .post("/api/auth/refresh")
+      .set("Cookie", newCookie);
+    expect(familyAlive.status).toBe(200);
+  });
+
+  it("revokes the whole family when a consumed token is replayed after the grace window", async () => {
+    const reg = await request(app).post("/api/auth/register").send(validUser);
+    const cookie = extractRtCookie(reg);
+    const rtValue = cookie.split(";")[0].slice("rt=".length);
+
+    const r1 = await request(app)
+      .post("/api/auth/refresh")
+      .set("Cookie", cookie);
+    expect(r1.status).toBe(200);
+    const newCookie = extractRtCookie(r1);
+
+    // Backdate the rotation past the concurrent-replay grace window, standing
+    // in for a stolen cookie presented well after the fact.
+    db.prepare(
+      `UPDATE refresh_tokens SET consumed_at = ?
+       WHERE token_hash = ?`,
+    ).run(Date.now() - 60_000, sha256(rtValue));
+
+    // Replaying an already-consumed token is then a token-theft signal: the
     // server revokes the ENTIRE rotation family, killing even the fresh token
     // that the legit client was issued a moment ago.
     const reuse = await request(app)

@@ -791,7 +791,7 @@ grabbed by the layout switcher — remap if needed.
 ## Testing
 
 ```bash
-npm test                 # Vitest: server (78 tests) + web (8 tests) unit tests
+npm test                 # Vitest: server (92 tests) + web (26 tests) unit tests
 npm run test:e2e         # build → Playwright E2E (5 tests: UI flows + real WebRTC)
 
 # First time only — downloads the Playwright browser

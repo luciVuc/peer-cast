@@ -102,7 +102,7 @@ npm run dev:web          # Vite dev server, :5173 (proxies /api + /peerjs)
 
 npm -w @peer-cast/extension run check   # node --check all extension JS
 
-npm test                 # server + web unit tests (Vitest, 98 tests)
+npm test                 # server + web unit tests (Vitest, 118 tests)
 npm run test:e2e         # full build + Playwright E2E (5 tests)
 npm -w @peer-cast/e2e run install-browser   # one-time: download Playwright browser
 
@@ -126,7 +126,13 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
 
 4. **Two-gate access control must stay intact.** (1) server withholds peerId +
    issues ticket; (2) broadcaster host verifies the ticket per call via
-   `/api/sessions/verify-ticket`. Gate 1 alone is insufficient.
+   `/api/sessions/verify-ticket`. Gate 1 alone is insufficient. Gate 2 must
+   complete **before** the host answers: `call.answer(stream)` begins sending
+   frames immediately, so verifying afterwards hands the broadcast to anyone
+   who merely learned the peerId. Both hosts (`BroadcastHost` in
+   `packages/web/src/lib/peer.ts` and `answerCall` in
+   `packages/extension/offscreen.js`) must fail **closed** — an unverifiable
+   ticket or a missing server URL means decline, never skip.
 
 5. **PeerJS ≥1.x rejects `peer.call(id, null)`.** Viewers pass a real dummy
    stream — see `dummyStream()` in `web/src/lib/peer.ts`.
@@ -192,12 +198,18 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     on re-issue (only one live token per user at a time). Reset: 1 h, single-use
     (deleted on first consumption, whether valid or expired). `consumeReset`
     always deletes the row — a second attempt always fails. Never reuse tokens.
+    `emailTokensRepo.purgeExpired()` runs from `housekeeping()` in `index.ts` —
+    these are unreferenced bearer credentials once expired, so never let them
+    accumulate.
 
 18. **Email → stdout fallback is intentional.** When `SMTP_HOST` is unset,
     `sendEmail()` prints to stdout instead of throwing. Do not change this to a
     throw — it is what makes dev and single-operator deployments work without
     SMTP config. The fallback message format must remain human-readable in the
-    log.
+    log, **including the recovery link**: with no SMTP the log is the only
+    delivery channel, so redacting the token makes verification and password
+    reset impossible. `EMAIL_REDACT_LINKS=true` is the opt-in escape hatch for
+    operators who must ship logs somewhere less trusted than the server.
 
 19. **`sendEmail` is always fire-and-forget** from routes — never `await` it in
     the HTTP response path. Registration sends a verification email best-effort;
@@ -207,6 +219,15 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
 20. **Malformed JSON bodies → 400, not 500.** The `errorHandler` catches
     `SyntaxError` with `status === 400` (set by body-parser) and returns
     `{error:"invalid JSON body", code:"BAD_JSON"}`. Do not remove this case.
+
+21. **Refresh-token reuse detection has a 15 s grace window.** The `rt` cookie is
+    per-browser but shared by every open tab, so two tabs can legitimately
+    present the _same_ token within milliseconds of each other.
+    `consumeRefreshToken()` treats a replay of a just-rotated token inside
+    `ROTATION_GRACE_MS` as that race and continues the family; anything later
+    still nukes the whole family (the real theft signal). Do not "tighten" this
+    back to zero — strict reuse detection signs multi-tab users out of every
+    session at once, which is the bug the window exists to prevent.
 
 ## Data model (SQLite — `packages/server/src/db/index.ts`)
 
@@ -247,7 +268,8 @@ types together.
 
 - [ ] `npm run build` succeeds (shared → web → server).
 - [ ] `npm run typecheck` clean for all three TS packages.
-- [ ] `npm test` green — 87 server tests + 11 web tests.
+- [ ] `npm test` green — 92 server tests + 26 web tests.
+- [ ] `npm run check:versions` green (version SSOT).
 - [ ] `npm run test:e2e` green — 5 Playwright tests (UI, WebRTC, moderation).
 - [ ] `npm -w @peer-cast/extension run check` passes.
 - [ ] `npx prettier --check .` clean.
