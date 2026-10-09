@@ -27,6 +27,10 @@ import { invitesRepo } from "../repos/invites.js";
 import { config } from "../config.js";
 import { timingSafeEqual } from "node:crypto";
 
+/** How long an account stays locked after too many failed sign-ins. Kept in
+ *  sync with usersRepo.recordFailedLogin via the test that asserts both. */
+export const LOCKOUT_MINUTES = 60;
+
 export const authRouter = Router();
 
 // ─── HttpOnly refresh-token cookie ──────────────────────────────────────────────
@@ -188,6 +192,20 @@ authRouter.post(
   }),
 );
 
+/** Best-effort lockout notice. Swallows its own failures. */
+async function notifyLockout(user: {
+  username_lc: string;
+  email: string;
+  display_name: string;
+}): Promise<void> {
+  const { sendEmail, lockoutNoticeTemplate } = await import("../lib/email.js");
+  const tmpl = lockoutNoticeTemplate({
+    displayName: user.display_name,
+    minutes: LOCKOUT_MINUTES,
+  });
+  await sendEmail({ to: user.email, ...tmpl });
+}
+
 const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
@@ -201,7 +219,7 @@ authRouter.post(
     // Check lockout before the (expensive) bcrypt compare.
     if (user && usersRepo.isLocked(user.username_lc)) {
       throw forbidden(
-        "account temporarily locked due to too many failed login attempts — try again in 30 minutes",
+        `account temporarily locked after too many failed sign-in attempts — try again in ${LOCKOUT_MINUTES} minutes`,
         "ACCOUNT_LOCKED",
       );
     }
@@ -217,7 +235,14 @@ authRouter.post(
     if (!user || !ok) {
       // Record the failure before throwing so we don't reveal whether the
       // user exists by the presence/absence of the counter update.
-      if (user) usersRepo.recordFailedLogin(user.username_lc);
+      if (user && usersRepo.recordFailedLogin(user.username_lc)) {
+        // The account just crossed the lockout threshold. Tell the owner:
+        // being locked out by someone else's guesses with no explanation and no
+        // notice is indistinguishable from being under attack with no recourse.
+        // Fire-and-forget per AGENTS.md rule 19 — a mail outage must never turn
+        // a failed login into a 500.
+        notifyLockout(user).catch(() => {});
+      }
       throw unauthorized("invalid credentials", "BAD_CREDENTIALS");
     }
     if (user.banned) throw forbidden("account suspended", "BANNED");

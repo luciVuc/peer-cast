@@ -7,7 +7,7 @@ import type {
 } from "@peer-cast/shared";
 import { nanoid } from "nanoid";
 import { timingSafeEqual, createHash } from "node:crypto";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import { db } from "../db/index.js";
 import { config } from "../config.js";
 import { usersRepo } from "./users.js";
@@ -100,8 +100,8 @@ function withUser(r: BroadcastRow): BroadcastWithUser {
  */
 const CODE_BCRYPT_COST = 10;
 
-function hashCode(code: string): string {
-  return `bcrypt$${bcrypt.hashSync(code, CODE_BCRYPT_COST)}`;
+async function hashCode(code: string): Promise<string> {
+  return `bcrypt$${await bcrypt.hash(code, CODE_BCRYPT_COST)}`;
 }
 
 /**
@@ -111,10 +111,13 @@ function hashCode(code: string): string {
  * broadcasts created before this change (self-healing: re-broadcasting the
  * same code re-hashes it under bcrypt).
  */
-function hashMatches(stored: string, candidate: string): boolean {
+async function hashMatches(
+  stored: string,
+  candidate: string,
+): Promise<boolean> {
   if (stored.startsWith("bcrypt$")) {
     try {
-      return bcrypt.compareSync(candidate, stored.slice("bcrypt$".length));
+      return await bcrypt.compare(candidate, stored.slice("bcrypt$".length));
     } catch {
       return false;
     }
@@ -210,7 +213,14 @@ export const broadcastsRepo = {
   },
 
   /** End any existing live broadcast(s) for a user, then start a new one. */
-  start(input: StartInput): Broadcast {
+  async start(input: StartInput): Promise<Broadcast> {
+    // Hash BEFORE opening the transaction: better-sqlite3 transactions are
+    // synchronous, so an await inside one would commit early and interleave
+    // with other writers. Access-code hashing moved to the async bcrypt API
+    // specifically so this connect-path work never blocks the event loop.
+    const accessCodeHash = input.accessCode
+      ? await hashCode(input.accessCode)
+      : null;
     const now = Date.now();
     const tx = db.transaction(() => {
       db.prepare(
@@ -230,7 +240,7 @@ export const broadcastsRepo = {
         input.title,
         input.description,
         input.access,
-        input.accessCode ? hashCode(input.accessCode) : null,
+        accessCodeHash,
         input.source,
         input.peerId,
         now,
@@ -425,11 +435,12 @@ export const broadcastsRepo = {
 
   /**
    * Verify that `code` matches the stored access code for broadcast `id`.
-   * The stored value is a SHA-256 digest (see `hashCode`) — we never compare
+   * The stored value is a bcrypt digest (see `hashCode`) — we never compare
    * plaintext. Comparison is constant-time to prevent timing-based
-   * brute-force enumeration of access codes.
+   * brute-force enumeration of access codes. Async because bcrypt runs off the
+   * event loop; this sits on the viewer connect path.
    */
-  verifyAccessCode(id: string, code: string): boolean {
+  async verifyAccessCode(id: string, code: string): Promise<boolean> {
     const r = this.getRaw(id);
     if (!r || r.access !== "code" || !r.access_code) return false;
     return hashMatches(r.access_code, code);

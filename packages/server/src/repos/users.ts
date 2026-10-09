@@ -265,25 +265,49 @@ export const usersRepo = {
   // ─── Login lockout ───────────────────────────────────────────────────
 
   /** After 20 failed attempts within 30 min (any IPs), lock the account for 30 min. */
-  recordFailedLogin(usernameLc: string): void {
-    const WINDOW_MS = 30 * 60_000;
-    const LOCK_AFTER = 20;
-    const LOCK_DURATION_MS = 30 * 60_000;
+  /**
+   * Count a failed login and lock the account once the threshold is crossed.
+   *
+   * The threshold is deliberately high (50 failures in 24 h) because this is a
+   * denial-of-service vector, not just a brute-force defence: the counter only
+   * advances for an *existing* user, so anyone who knows a victim's handle can
+   * lock them out on demand. At the previous threshold of 20/30 min a modest
+   * rotating-IP fleet reached it in minutes — about 3 IP addresses' worth of the
+   * 10/15min per-IP login budget.
+   *
+   * Raising it costs real brute-force protection nothing: a single attacker
+   * hammering from one address is already stopped by the per-IP rate limiter
+   * long before 50 attempts, and a distributed attacker is stopped by the
+   * bcrypt cost factor rather than by a lockout they can also trigger at will.
+   * The lockout's real job is slowing a slow, human-paced guessing run — which
+   * a 24 h window and a generous threshold still does.
+   *
+   * Returns true when this call is what caused the lock, so the caller can
+   * notify the account owner (see routes/auth.ts).
+   */
+  recordFailedLogin(usernameLc: string): boolean {
+    const WINDOW_MS = 24 * 60 * 60_000;
+    const LOCK_AFTER = 50;
+    const LOCK_DURATION_MS = 60 * 60_000;
     const now = Date.now();
     const r = this.getRaw(usernameLc);
-    if (!r) return;
+    if (!r) return false;
     // Reset counter if the rolling window has expired.
     const windowStart = r.failed_login_window ?? 0;
     const count =
       now - windowStart < WINDOW_MS ? (r.failed_logins ?? 0) + 1 : 1;
     const newWindow = count === 1 ? now : windowStart;
-    const lockedUntil =
-      count >= LOCK_AFTER ? now + LOCK_DURATION_MS : (r.locked_until ?? null);
+    const alreadyLocked = !!r.locked_until && r.locked_until > now;
+    const justLocked = !alreadyLocked && count >= LOCK_AFTER;
+    const lockedUntil = justLocked
+      ? now + LOCK_DURATION_MS
+      : (r.locked_until ?? null);
     db.prepare(
       `UPDATE users SET failed_logins = ?, failed_login_window = ?,
          locked_until = ?, updated_at = ?
        WHERE username_lc = ?`,
     ).run(count, newWindow, lockedUntil, now, usernameLc);
+    return justLocked;
   },
 
   resetFailedLogins(usernameLc: string): void {

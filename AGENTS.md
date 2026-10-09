@@ -218,6 +218,16 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     back to anonymous — this is by design. Don't imply server-side content
     control.
 
+    **Peer ids are unique by construction — do not re-implement this.** An audit
+    once claimed a second socket could claim a live broadcaster's `peerId` and
+    shadow its inbound calls, and proposed a binding layer in `peerServer.ts`.
+    That is wrong: the `peer` package calls `getClientById` on every registration
+    and answers `ID-TAKEN` (surfacing client-side as `unavailable-id`) unless the
+    socket presents the _same_ per-client token, which only the incumbent holds.
+    A home-grown binding layer duplicates that and risks evicting a legitimate
+    reconnecting peer. `tests/e2e/specs/peer-id-shadow.spec.ts` pins the upstream
+    behaviour — if it fails after a PeerJS bump, the guarantee is genuinely gone.
+
 17. **Email tokens are short-lived and single-use.** Verification: 24 h, revoked
     on re-issue (only one live token per user at a time). Reset: 1 h, single-use
     (deleted on first consumption, whether valid or expired). `consumeReset`
@@ -269,7 +279,27 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     stored indefinitely and served publicly with a long immutable cache — write
     the client's bytes verbatim and that becomes a standing doxxing surface.
 
-24. **Rate limits are sized for the endpoint's real traffic, keyed per user when
+24. **Native bcrypt, async API only.** `bcryptjs` is pure JS, so its "async"
+    `compare()` still blocks the event loop for the length of the hash (~101 ms
+    measured at cost 12). Native `bcrypt` on the async API hands the work to
+    libuv's threadpool (~1 ms stall) for the same wall clock. Use the async
+    functions on any request path — `hashSync`/`compareSync` block in _both_
+    implementations and are only safe at module load (see
+    `DUMMY_PASSWORD_HASH`). This made `broadcastsRepo.start()` and
+    `verifyAccessCode()` async; access-code hashing is computed **before** the
+    better-sqlite3 transaction, never inside one. Hash format is `$2b$` and stays
+    compatible with the existing `$2a$` rows.
+
+25. **Account lockout is a backstop, not the brute-force defence.** It counts
+    failures only for an existing user, so a low threshold is a denial-of-service
+    primitive against any known handle — 20 failures/30 min was roughly three IPs'
+    worth of the 10/15min login budget. It is now 50/24h with a 60-minute lock,
+    and emails the owner on the attempt that crosses the threshold (once, not on
+    every later attempt — those short-circuit on the `isLocked` guard).
+    Single-source guessing is stopped by the per-IP limiter well before 50
+    attempts; do not lower the threshold to "improve" brute-force protection.
+
+26. **Rate limits are sized for the endpoint's real traffic, keyed per user when
     possible.** `app.use` is a prefix mount, so a limiter mounted on a path
     silently covers every sub-route under it — two limiters got mis-scoped this
     way (`/api/broadcasts` swallowed the 2 s `stats` heartbeat, `/api/sessions`
@@ -277,6 +307,9 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     `/api/push/subscribe` + `/api/users/:u/follow` swallowed their DELETEs).
     Scope with an explicit method + `req.path` test
     (relative to the mount) rather than assuming the mount means one endpoint.
+    `/api/config` and `/api/health` are unauthenticated by necessity and carry
+    their own ceilings rather than inheriting a neighbour's — config does an
+    HMAC plus a TURN-credential mint per request when TURN_SHARED_SECRET is set.
     Beyond that:
     - **Key viewer-facing endpoints per authenticated user, falling back to IP.**
       Keying on IP alone puts every viewer behind one NAT into a single shared

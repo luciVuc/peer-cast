@@ -212,6 +212,12 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     };
 
     // Login: 10/15 min per IP + 10/15 min per username.
+    // /api/config is unauthenticated (the client needs it before it can log in)
+    // and performs an HMAC plus a fresh TURN credential mint per request when
+    // TURN_SHARED_SECRET is set, so an unlimited rate is free CPU for whoever
+    // wants it. Generous enough that a PWA install — which fetches config on
+    // boot and again on reconnect — never trips it.
+    app.use("/api/config", mkLim("config-ip", 5 * 60_000, 30));
     app.use("/api/auth/login", mkLim("login-ip", 15 * 60_000, 10));
     app.use(
       "/api/auth/login",
@@ -427,6 +433,10 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
     });
   }
 
+  // Unauthenticated by necessity: the client needs config before it can
+  // authenticate, and health is how an orchestrator probes. /api/config is
+  // rate limited above; /api/health is a constant {ok:true} and cheap enough to
+  // leave open so container probes and uptime checks never get a 429.
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   // Serve avatar images with long-lived caching (URL ?v= param busts the cache).
   app.use(

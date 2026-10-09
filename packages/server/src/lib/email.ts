@@ -152,6 +152,41 @@ export function resetPasswordTemplate(opts: {
   return { html, text, subject: `Reset your ${config.appName} password` };
 }
 
+/**
+ * Sent the moment an account lockout fires. Without it, the owner discovers
+ * the lockout only by being unable to sign in — and cannot tell that it was
+ * somebody else's guesses that caused it, which is the whole reason the
+ * notification exists (see usersRepo.recordFailedLogin on the DoS trade-off).
+ */
+export function lockoutNoticeTemplate(opts: {
+  displayName: string;
+  minutes: number;
+}) {
+  const name = esc(opts.displayName);
+  const html = wrap(
+    "Your account was temporarily locked",
+    `<p>Hi ${name},</p>
+     <p>Your ${config.appName} account has been temporarily locked after a
+        number of failed sign-in attempts. It unlocks automatically in about
+        ${opts.minutes} minutes — no action is needed.</p>
+     <p><strong>If this wasn't you</strong>, someone has your username and has
+        been guessing your password. Consider changing it, and enable two-factor
+        protection at your reverse proxy if this instance has it.</p>`,
+  );
+  const text =
+    `Hi ${opts.displayName},\n\n` +
+    `Your ${config.appName} account was temporarily locked after a number of ` +
+    `failed sign-in attempts. It unlocks automatically in about ${opts.minutes} ` +
+    `minutes.\n\n` +
+    `If this wasn't you, someone has your username and has been guessing your ` +
+    `password. Consider changing it.\n`;
+  return {
+    html,
+    text,
+    subject: `Your ${config.appName} account was temporarily locked`,
+  };
+}
+
 export function emailChangeTemplate(opts: {
   displayName: string;
   newEmail: string;

@@ -241,7 +241,7 @@ describe("reports", () => {
     await register(app, "victim");
 
     // A well-formed report against a broadcast the target really owns.
-    const bc = broadcastsRepo.start({
+    const bc = await broadcastsRepo.start({
       usernameLc: "victim",
       title: "Live",
       description: null,
@@ -266,20 +266,19 @@ describe("reports", () => {
     expect(unknownBc.status).toBe(400);
 
     // Someone else's broadcast cannot be pinned to this report.
-    const foreign = await request(app)
-      .post("/api/reports")
-      .send({
-        targetUsername: "victim",
-        broadcastId: broadcastsRepo.start({
-          usernameLc: "erin",
-          title: "Innocent",
-          description: null,
-          access: "public",
-          source: "tab",
-          peerId: "peer-erin",
-        }).id,
-        reason: "abusive stream",
-      });
+    const erinBc = await broadcastsRepo.start({
+      usernameLc: "erin",
+      title: "Innocent",
+      description: null,
+      access: "public",
+      source: "tab",
+      peerId: "peer-erin",
+    });
+    const foreign = await request(app).post("/api/reports").send({
+      targetUsername: "victim",
+      broadcastId: erinBc.id,
+      reason: "abusive stream",
+    });
     expect(foreign.status).toBe(400);
   });
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import request from "supertest";
 import type { Express } from "express";
 import { makeApp, resetDb, validUser } from "./helpers.js";

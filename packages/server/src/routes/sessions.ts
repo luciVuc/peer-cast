@@ -60,7 +60,7 @@ sessionsRouter.get(
 
     // access === "code"
     const code = String(req.query.code ?? "");
-    if (!code || !broadcastsRepo.verifyAccessCode(row.id, code)) {
+    if (!code || !(await broadcastsRepo.verifyAccessCode(row.id, code))) {
       res
         .status(code ? 403 : 401)
         .json({ ...base, peerId: null, ticket: null, needsCode: true });

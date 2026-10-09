@@ -69,7 +69,7 @@ broadcastsRouter.post(
     if (body.access === "code" && !body.accessCode) {
       throw badRequest("accessCode is required when access is 'code'");
     }
-    const broadcast = broadcastsRepo.start({
+    const broadcast = await broadcastsRepo.start({
       usernameLc: req.auth!.usernameLc,
       title: body.title,
       description: body.description?.trim() ?? null,

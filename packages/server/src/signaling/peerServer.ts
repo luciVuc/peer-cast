@@ -107,5 +107,17 @@ export function createPeerServer(httpServer: Server) {
     );
   }
 
+  // NOTE on peer-id hijacking: an earlier review of this file claimed a second
+  // socket could register an id already held by a live broadcaster and thereby
+  // shadow its inbound calls. It cannot — the `peer` package calls
+  // getClientById on every registration and answers ID-TAKEN (surfacing client
+  // side as `unavailable-id`) unless the connecting socket presents the *same*
+  // per-client token, which only the incumbent holds. Verified empirically, not
+  // assumed: see tests/e2e/specs/peer-id-shadow.spec.ts.
+  //
+  // Deliberately do NOT add a second, home-grown id-binding layer here. It
+  // duplicates what the library already enforces, and a dead-socket heuristic
+  // would risk evicting a legitimate reconnecting peer — whose same-token
+  // resume is exactly the case the library permits and ours would break.
   return peerServer;
 }

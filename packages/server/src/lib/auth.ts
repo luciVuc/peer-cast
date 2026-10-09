@@ -1,4 +1,4 @@
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { createHash, randomBytes } from "node:crypto";
 import { config } from "../config.js";
@@ -7,6 +7,25 @@ import { getRedis } from "./redis.js";
 
 // ─── Passwords ──────────────────────────────────────────────────────────────
 
+/**
+ * Use the ASYNC bcrypt API only.
+ *
+ * Both bcrypt implementations compute synchronously in JS or in a blocking
+ * native call; measured at cost 12 on this machine:
+ *
+ *   bcryptjs.compare()   ~265 ms wall, **101 ms event-loop stall**
+ *   bcrypt.compare()     ~265 ms wall,    **1 ms event-loop stall** (threadpool)
+ *
+ * Wall-clock is a wash, so switching implementations buys nothing on its own —
+ * what matters is that the native async binding hands the work to libuv's
+ * threadpool. At cost 12 the JS version monopolises the loop for ~100 ms per
+ * login, so concurrent logins serialise and every in-flight request (SSE-less,
+ * but still: signaling tickets, stats heartbeats, viewer resolves) waits
+ * behind them. Never call hashSync/compareSync on the request path.
+ *
+ * Hash format is `$2b$` and stays interchangeable with the `$2a$` digests
+ * bcryptjs produced, so existing accounts keep working untouched.
+ */
 export async function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, 12);
 }
@@ -28,6 +47,9 @@ export async function verifyPassword(
  * Derived at runtime rather than committed so it can never be mistaken for a
  * credential, and its plaintext is discarded immediately — it protects no
  * account.
+ *
+ * hashSync is safe here precisely because this runs once at module load, never
+ * on a request path.
  */
 export const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
   randomBytes(32).toString("hex"),

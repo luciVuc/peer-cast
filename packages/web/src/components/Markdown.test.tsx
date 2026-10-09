@@ -49,4 +49,26 @@ describe("Markdown", () => {
     const { container } = render(<Markdown>{"   \n  "}</Markdown>);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("drops remote images so a profile blurb cannot beacon visitors", () => {
+    const { container } = render(
+      <Markdown>
+        {"before ![beacon](https://tracker.example/pixel.png) after"}
+      </Markdown>,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    // The surrounding text still renders — only the image is removed.
+    expect(container.textContent).toContain("before");
+    expect(container.textContent).toContain("after");
+  });
+
+  it("keeps same-origin images and marks them lazy + referrer-free", () => {
+    const { container } = render(
+      <Markdown>{"![local](/api/avatars/alice.png)"}</Markdown>,
+    );
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute("referrerpolicy", "no-referrer");
+  });
 });

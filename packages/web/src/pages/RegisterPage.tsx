@@ -163,23 +163,32 @@ export function RegisterPage() {
               />
             </div>
           )}
-          <div>
-            <label className="label" htmlFor="reg-adminBootstrapSecret">
-              Admin bootstrap secret (optional)
-            </label>
-            <input
-              id="reg-adminBootstrapSecret"
-              className="input"
-              type="password"
-              value={form.adminBootstrapSecret}
-              onChange={(e) => set("adminBootstrapSecret", e.target.value)}
-              autoComplete="off"
-              placeholder="Only needed for the configured admin handle"
-            />
-            <p className="mt-1 text-xs text-slate-400">
-              Leave blank for a regular account.
-            </p>
-          </div>
+          {/*
+            Only rendered where it can actually be used. This field was shown to
+            every anonymous registrant, which maximised the shoulder-surfing and
+            password-manager-capture surface for an operator secret that ~99% of
+            visitors must leave blank. `cfg.adminBootstrap` is only true when the
+            server reports a configured bootstrap path (see routes/config.ts).
+          */}
+          {cfg?.adminBootstrap && (
+            <div>
+              <label className="label" htmlFor="reg-adminBootstrapSecret">
+                Admin bootstrap secret (optional)
+              </label>
+              <input
+                id="reg-adminBootstrapSecret"
+                className="input"
+                type="password"
+                value={form.adminBootstrapSecret}
+                onChange={(e) => set("adminBootstrapSecret", e.target.value)}
+                autoComplete="off"
+                placeholder="Only needed for the configured admin handle"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Leave blank for a regular account.
+              </p>
+            </div>
+          )}
           <button
             className="btn-primary w-full"
             disabled={isLoading || !usernameOk || !passwordOk || !inviteOk}
