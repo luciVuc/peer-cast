@@ -28,6 +28,7 @@ let authState: { accessToken: string | null; user: unknown } = {
   accessToken: null,
   user: null,
 };
+let broadcastStatus: "idle" | "starting" | "live" | "ending" = "idle";
 
 vi.mock("../store", () => ({
   useAppDispatch: () => () => {},
@@ -35,7 +36,7 @@ vi.mock("../store", () => ({
     sel({
       auth: authState,
       broadcast: {
-        status: "idle",
+        status: broadcastStatus,
         active: null,
         stats: null,
       },
@@ -78,10 +79,35 @@ function isHiddenBelowSm(el: Element): boolean {
   );
 }
 
+/** Visible only from `bp` and up. */
+function showsAt(el: Element, bp: "sm" | "lg"): boolean {
+  return (
+    el.className.includes(`${bp}:block`) && el.className.includes("hidden")
+  );
+}
+
 describe("responsive header actions", () => {
   beforeEach(() => {
     authState = { accessToken: null, user: null };
+    broadcastStatus = "idle";
   });
+
+  const signedIn = (role = "user") => {
+    authState = {
+      accessToken: "t",
+      user: {
+        username: "alice",
+        displayName: "Alice Johnson",
+        about: null,
+        avatarUrl: null,
+        createdAt: 1,
+        email: "alice@example.com",
+        role,
+        emailVerified: true,
+        updatedAt: 1,
+      },
+    };
+  };
 
   it("hides Sign in / Register below sm and shows them from sm up", () => {
     renderLayout();
@@ -135,20 +161,7 @@ describe("responsive header actions", () => {
   });
 
   it("still shows the signed-in drawer without the auth links", () => {
-    authState = {
-      accessToken: "t",
-      user: {
-        username: "alice",
-        displayName: "Alice",
-        about: null,
-        avatarUrl: null,
-        createdAt: 1,
-        email: "alice@example.com",
-        role: "user",
-        emailVerified: true,
-        updatedAt: 1,
-      },
-    };
+    signedIn();
     renderLayout();
     act(() => screen.getByRole("button", { name: "Open menu" }).click());
 
@@ -166,5 +179,99 @@ describe("responsive header actions", () => {
       (b) => b.textContent,
     );
     expect(menuButtons.join(" ")).toMatch(/sign out/i);
+  });
+
+  describe("signed-in top bar", () => {
+    beforeEach(signedIn);
+
+    it("hides the idle Go live action below sm, since the drawer carries it", () => {
+      renderLayout();
+      const goLive = screen.getByRole("link", { name: "Start a broadcast" });
+      expect(isHiddenBelowSm(goLive)).toBe(true);
+    });
+
+    it("keeps the Live status pill visible at every width", () => {
+      broadcastStatus = "live";
+      renderLayout();
+      const live = screen.getByRole("link", {
+        name: "Manage your live broadcast",
+      });
+      // Status feedback, not navigation: it must NOT collapse into the drawer.
+      expect(live.className).not.toMatch(/\bhidden\b/);
+      expect(live.className).toContain("whitespace-nowrap");
+    });
+
+    it("gives the avatar link an accessible name", () => {
+      renderLayout();
+      // Without this a screen reader announces "AJ, link" — the initials carry
+      // no meaning about where the link goes.
+      expect(
+        screen.getByRole("link", { name: /your account \(alice johnson\)/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps Dashboard and Sign out collapsed below sm", () => {
+      renderLayout();
+      expect(
+        isHiddenBelowSm(screen.getByRole("link", { name: "Dashboard" })),
+      ).toBe(true);
+      expect(
+        isHiddenBelowSm(screen.getByRole("button", { name: "Sign out" })),
+      ).toBe(true);
+    });
+
+    it("shows an Admin link in the drawer for an admin account", () => {
+      signedIn("admin");
+      renderLayout();
+      act(() => screen.getByRole("button", { name: "Open menu" }).click());
+      const menu = screen.getByRole("dialog", { name: "Menu" });
+      const hrefs = Array.from(menu.querySelectorAll("a")).map((a) =>
+        a.getAttribute("href"),
+      );
+      expect(hrefs).toContain("/admin");
+    });
+
+    it("does not offer an Admin link to a normal account", () => {
+      renderLayout();
+      act(() => screen.getByRole("button", { name: "Open menu" }).click());
+      const menu = screen.getByRole("dialog", { name: "Menu" });
+      const hrefs = Array.from(menu.querySelectorAll("a")).map((a) =>
+        a.getAttribute("href"),
+      );
+      expect(hrefs).not.toContain("/admin");
+    });
+
+    it("never lets a nav label wrap onto a second line", () => {
+      renderLayout();
+      // "Go live" and "Sign out" both wrapped at narrow widths before this, which
+      // is what pushed the bar past its container and caused the overflow.
+      // The Go live link is labelled "Start a broadcast" via aria-label, so
+      // query by accessible name rather than visible text.
+      const labelled = [
+        screen.getByRole("link", { name: "Start a broadcast" }),
+        screen.getByRole("button", { name: "Sign out" }),
+        screen.getByRole("link", { name: "Dashboard" }),
+      ];
+      for (const el of labelled) {
+        expect(el.className).toContain("whitespace-nowrap");
+      }
+    });
+
+    it("shows the desktop search form only from lg, not sm", () => {
+      renderLayout();
+      const form = document.querySelector("header form")!;
+      // Between sm and lg the full inline nav is present, and a `flex-1` input
+      // absorbs all the slack and collapses to an unusable sliver. The search
+      // icon covers that range instead.
+      expect(showsAt(form, "lg")).toBe(true);
+      expect(form.className).not.toContain("sm:block");
+      expect(form.className).toContain("min-w-0");
+    });
+
+    it("keeps the search icon available below lg", () => {
+      renderLayout();
+      const search = screen.getByRole("button", { name: /search/i });
+      expect(search.className).toContain("lg:hidden");
+    });
   });
 });

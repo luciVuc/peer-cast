@@ -221,8 +221,17 @@ export function Layout() {
             <span className="text-lg tracking-tight">PeerCast</span>
           </Link>
 
-          {/* Desktop search */}
-          <form onSubmit={onSearch} className="ml-2 hidden flex-1 sm:block">
+          {/*
+            Desktop search. Starts at `lg`, not `sm`: between sm and lg the full
+            inline nav (Go live / Dashboard / Admin / avatar / Sign out) is on
+            screen, and a `flex-1` input in that row absorbs every pixel of
+            slack and collapses to an unusable sliver. Below lg the search icon
+            is shown instead, which is what mobile already used.
+          */}
+          <form
+            onSubmit={onSearch}
+            className="ml-2 hidden min-w-0 flex-1 lg:block"
+          >
             <input
               className="input max-w-md"
               placeholder="Search users and live broadcasts…"
@@ -237,7 +246,7 @@ export function Layout() {
               type="button"
               aria-label={mobileSearchOpen ? "Close search" : "Search"}
               onClick={() => setMobileSearchOpen((o) => !o)}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 transition hover:bg-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-500/60 sm:hidden"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 transition hover:bg-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-500/60 lg:hidden"
             >
               {mobileSearchOpen ? (
                 <svg
@@ -267,23 +276,31 @@ export function Layout() {
             {user ? (
               <>
                 {isLive ? (
+                  // While live this stays visible at every width: it is status
+                  // feedback a broadcaster needs at a glance, not just a link,
+                  // so hiding it behind the burger would be the wrong trade.
+                  // `whitespace-nowrap` keeps it on one line at 320px.
                   <NavLink
                     to="/broadcast"
                     aria-label="Manage your live broadcast"
-                    className="flex min-h-11 items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
+                    className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
                   >
                     <span
-                      className="h-2 w-2 animate-pulse rounded-full bg-white"
+                      className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-white"
                       aria-hidden="true"
                     />
                     Live
                   </NavLink>
                 ) : (
+                  // Idle "Go live" is a primary *action*, and it is reachable
+                  // from the dashboard and the drawer, so it collapses below
+                  // `sm` with the rest of the navigation. At 320px it was
+                  // forcing the bar to overflow and wrapping onto two lines.
                   <NavLink
                     to="/broadcast"
                     aria-label="Start a broadcast"
                     className={({ isActive }) =>
-                      `btn-ghost ${isActive ? "ring-1 ring-brand-500" : ""}`
+                      `btn-ghost hidden whitespace-nowrap sm:inline-flex ${isActive ? "ring-1 ring-brand-500" : ""}`
                     }
                   >
                     Go live
@@ -293,7 +310,7 @@ export function Layout() {
                 <NavLink
                   to="/dashboard"
                   className={({ isActive }) =>
-                    `hidden sm:inline-flex btn-ghost ${isActive ? "ring-1 ring-brand-500" : ""}`
+                    `hidden whitespace-nowrap sm:inline-flex btn-ghost ${isActive ? "ring-1 ring-brand-500" : ""}`
                   }
                 >
                   Dashboard
@@ -308,11 +325,19 @@ export function Layout() {
                     Admin
                   </NavLink>
                 )}
-                <Link to="/dashboard" className="flex items-center">
+                {/* The avatar is the account menu entry point. It has no
+                 * visible text, so it needs an explicit accessible name — a
+                 * bare initials image announces as "AJ, link", which tells a
+                 * screen-reader user nothing about where it goes. */}
+                <Link
+                  to="/dashboard"
+                  aria-label={`Your account (${user.displayName})`}
+                  className="flex shrink-0 items-center"
+                >
                   <Avatar user={user} size={36} />
                 </Link>
                 <button
-                  className="btn-ghost hidden sm:inline-flex"
+                  className="btn-ghost hidden whitespace-nowrap sm:inline-flex"
                   onClick={signOut}
                 >
                   Sign out
