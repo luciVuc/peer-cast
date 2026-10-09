@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import bcrypt from "bcryptjs";
 import request from "supertest";
 import type { Express } from "express";
 import { makeApp, resetDb, validUser } from "./helpers.js";
@@ -108,13 +109,23 @@ describe("access control", () => {
     const row = db
       .prepare(`SELECT access_code FROM broadcasts WHERE access = 'code'`)
       .get() as { access_code: string };
-    expect(row.access_code).toBe(
-      `sha256$${createHash("sha256").update("open42").digest("hex")}`,
-    );
+    // bcrypt, not a bare digest: a 6-char human-chosen code has almost no
+    // entropy, so an unsalted SHA-256 is a seconds-long offline dictionary
+    // attack for anyone who obtains the DB file.
+    expect(row.access_code).toMatch(/^bcrypt\$\$2[aby]\$\d{2}\$/);
     expect(row.access_code).not.toContain("open42");
+    // …and it must actually verify against the stored digest.
+    expect(
+      bcrypt.compareSync("open42", row.access_code.slice("bcrypt$".length)),
+    ).toBe(true);
+    expect(
+      bcrypt.compareSync("wrong42", row.access_code.slice("bcrypt$".length)),
+    ).toBe(false);
     // The gate still works against the digest.
     const right = await request(app).get("/api/sessions/alice?code=open42");
     expect(right.status).toBe(200);
+    const wrong = await request(app).get("/api/sessions/alice?code=wrong42");
+    expect(wrong.status).toBe(403);
   });
 
   it("soft-migrates legacy plaintext access codes", async () => {
@@ -147,18 +158,75 @@ describe("access control", () => {
       peerId: "secret-peer-id",
     });
 
+    // Gated broadcasts are not listed in public discovery at all (see below),
+    // so assert the members-only title is absent rather than merely redacted.
     const live = await request(app).get("/api/broadcasts/live");
-    expect(live.body.broadcasts[0].peerId).toBeNull();
+    for (const b of live.body.broadcasts) expect(b.peerId).toBeNull();
+    expect(JSON.stringify(live.body)).not.toContain("Members");
 
     const search = await request(app).get("/api/users/search?q=alice");
     for (const b of search.body.broadcasts) expect(b.peerId).toBeNull();
 
+    // Anonymous callers get no live card for a gated stream either.
     const profile = await request(app).get("/api/users/alice");
     expect(profile.body.live?.peerId ?? null).toBeNull();
 
     // Sanity: the secret id is nowhere in the serialized responses.
     expect(JSON.stringify(live.body)).not.toContain("secret-peer-id");
     expect(JSON.stringify(profile.body)).not.toContain("secret-peer-id");
+  });
+
+  it("hides gated broadcast metadata from anonymous callers but not from members", async () => {
+    const token = await registerAndToken(app);
+    const { body: started } = await start(app, token, {
+      title: "Secret meeting",
+      access: "code",
+      source: "screen",
+      peerId: "gated-peer-id",
+      accessCode: "hunter22",
+    });
+    const id = started.broadcast.id as string;
+
+    // Anonymous: the broadcast must not be discoverable at all. Title, owner,
+    // and audience size are exactly what `access: code` was chosen to conceal.
+    const anonList = await request(app).get("/api/broadcasts/live");
+    expect(JSON.stringify(anonList.body)).not.toContain("Secret meeting");
+    const anonDetail = await request(app).get(`/api/broadcasts/${id}`);
+    expect(anonDetail.status).toBe(404);
+    const anonProfile = await request(app).get("/api/users/alice");
+    expect(anonProfile.body.live).toBeNull();
+
+    // Owner still sees their own stream (and still never the peerId here).
+    const ownerDetail = await request(app)
+      .get(`/api/broadcasts/${id}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(ownerDetail.status).toBe(200);
+    expect(ownerDetail.body.broadcast.peerId).toBeNull();
+    expect(ownerDetail.body.broadcast.title).toBe("Secret meeting");
+  });
+
+  it("still serves public broadcasts to anonymous callers", async () => {
+    const token = await registerAndToken(app);
+    const { body: started } = await start(app, token, {
+      title: "Open stream",
+      access: "public",
+      source: "screen",
+      peerId: "public-peer-id",
+    });
+
+    const list = await request(app).get("/api/broadcasts/live");
+    expect(list.body.broadcasts[0].title).toBe("Open stream");
+    expect(list.body.broadcasts[0].peerId).toBeNull();
+
+    const detail = await request(app).get(
+      `/api/broadcasts/${started.broadcast.id}`,
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.broadcast.peerId).toBeNull();
+
+    const profile = await request(app).get("/api/users/alice");
+    expect(profile.body.live.title).toBe("Open stream");
+    expect(profile.body.live.peerId).toBeNull();
   });
 
   it("returns 404 when the user is not live", async () => {

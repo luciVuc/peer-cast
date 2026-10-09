@@ -206,8 +206,17 @@ export function ViewerPage() {
           if (wasLiveRef.current) scheduleReconnect();
           return;
         }
-        if (status === 401) setPhase(authed ? "need-code" : "need-auth");
-        else if (status === 403) {
+        if (status === 401) {
+          // Distinguish "you must sign in" from "you must enter a code". The
+          // server marks a code-gated 401 with `needsCode`; a plain 401 means
+          // the session is gone or never existed. Inferring the code prompt
+          // from `authed` asked mid-watch viewers for a code that does not
+          // exist on a members-only stream — a prompt that can never succeed.
+          const needsCode = (
+            res.error as { data?: { needsCode?: boolean } } | undefined
+          )?.data?.needsCode;
+          setPhase(needsCode ? "need-code" : "need-auth");
+        } else if (status === 403) {
           setPhase("need-code");
           setErrMsg("Incorrect access code.");
         } else setPhase("error");
@@ -219,7 +228,10 @@ export function ViewerPage() {
         return;
       }
       if (!data.peerId) {
-        setPhase(authed ? "need-code" : "need-auth");
+        // A 200 without a peerId is not an access problem — there is nothing
+        // to prompt for. Report it as an error rather than showing a code
+        // field the viewer cannot satisfy.
+        setPhase(authed ? "error" : "need-auth");
         return;
       }
       // Remember the code that unlocked this session so automatic reconnects
@@ -271,8 +283,13 @@ export function ViewerPage() {
   // viewer count + bitrate stay current while watching without re-resolving.
   // For non-public/non-discoverable broadcasts the live feed won't include
   // the broadcast, so fall back to stats from the resolve response.
+  // This poll exists only to refine the viewer-count overlay; `result.data.stats`
+  // below is already the correct value from the resolve response. Gate it on
+  // actually playing so viewers sitting on the code prompt, an error, or a
+  // dead host are not polling the feed at all, and drop to 30 s otherwise.
   const { data: liveFeed } = useListLiveQuery(undefined, {
-    pollingInterval: 15000,
+    pollingInterval: 30000,
+    skip: phase !== "playing",
   });
   const liveStats =
     liveFeed?.broadcasts.find((b) => b.owner.username === username)?.stats ??
@@ -499,8 +516,11 @@ export function ViewerPage() {
             Describe the problem with this broadcast. Reports are reviewed by
             admins.
           </p>
-          <label className="label">Reason</label>
+          <label className="label" htmlFor="vp-report-reason">
+            Reason
+          </label>
           <textarea
+            id="vp-report-reason"
             className="input"
             rows={3}
             autoFocus

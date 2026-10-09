@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ABOUT_MAX, DISPLAY_NAME_MAX, PASSWORD_MIN } from "@peer-cast/shared";
+import {
+  ABOUT_MAX,
+  DISPLAY_NAME_MAX,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
+} from "@peer-cast/shared";
 import type {
   SearchResponse,
   SelfProfileResponse,
@@ -12,7 +17,12 @@ import {
   revokeAllRefreshTokens,
 } from "../lib/auth.js";
 import { saveAvatar, deleteAvatar } from "../lib/avatar.js";
-import { badRequest, notFound, unauthorized } from "../lib/errors.js";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  unauthorized,
+} from "../lib/errors.js";
 import { asyncHandler } from "../middleware/error.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { usersRepo } from "../repos/users.js";
@@ -30,6 +40,9 @@ const MAX_AVATAR_BYTES = 200 * 1024;
 const RASTER_DATA_URL_RE =
   /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/;
 
+/** Longest accepted search term (see the LIKE-injection note in repos/users). */
+const MAX_SEARCH_LEN = 64;
+
 // ─── Directory search (users + live broadcasts) ─────────────────────────────
 
 usersRouter.get(
@@ -39,6 +52,16 @@ usersRouter.get(
     if (!q) {
       res.json({ users: [], broadcasts: [] } satisfies SearchResponse);
       return;
+    }
+    // Cap the term length before it reaches SQL. Both repos wrap it in
+    // LIKE '%…%', so the pattern is unbounded and each request is a full table
+    // scan; a caller-supplied megabyte of query text turns a cheap endpoint
+    // into a denial-of-service primitive. This route is unauthenticated, so it
+    // also gets a per-IP limiter in app.ts.
+    if (q.length > MAX_SEARCH_LEN) {
+      throw badRequest(
+        `search query must be ${MAX_SEARCH_LEN} characters or fewer`,
+      );
     }
     const out: SearchResponse = {
       users: usersRepo.search(q),
@@ -83,7 +106,10 @@ usersRouter.put(
           "avatar must be a raster image (PNG/JPEG/WebP/GIF) as a data URL ≤ 200 KB",
         );
       }
-      patch.avatarUrl = saveAvatar(req.auth!.usernameLc, body.avatarDataUrl);
+      patch.avatarUrl = await saveAvatar(
+        req.auth!.usernameLc,
+        body.avatarDataUrl,
+      );
     } else if (body.avatarDataUrl === null) {
       deleteAvatar(req.auth!.usernameLc);
       patch.avatarUrl = null;
@@ -115,7 +141,10 @@ usersRouter.put(
 
 const passwordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(PASSWORD_MIN),
+  newPassword: z
+    .string()
+    .min(PASSWORD_MIN)
+    .max(PASSWORD_MAX, `password must be at most ${PASSWORD_MAX} characters`),
 });
 
 usersRouter.put(
@@ -139,6 +168,70 @@ usersRouter.put(
     usersRepo.bumpTokenVersion(req.auth!.usernameLc);
     revokeAllRefreshTokens(req.auth!.usernameLc);
     res.json({ ok: true });
+  }),
+);
+
+// ─── Data export (right to portability, GDPR Art. 20) ───────────────────────
+//
+// The right to erasure (DELETE /me) already exists; portability is its
+// counterpart and was missing. Returns a machine-readable copy of everything
+// the instance holds about the caller.
+//
+// Deliberately excludes other users' data: the follow graph is exported
+// one-directionally (who the caller follows, and who follows them) rather than
+// as full records of third parties.
+
+usersRouter.get(
+  "/me/export",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const usernameLc = req.auth!.usernameLc;
+    const self = usersRepo.getSelf(usernameLc);
+    if (!self) throw notFound("user not found");
+
+    const { db } = await import("../db/index.js");
+    const { reportsRepo } = await import("../repos/reports.js");
+
+    // Following: who this account follows.
+    const following = (
+      db
+        .prepare(
+          `SELECT f.followed_lc AS username
+             FROM follows f WHERE f.follower_lc = ? ORDER BY f.created_at DESC`,
+        )
+        .all(usernameLc) as { username: string }[]
+    ).map((r) => r.username);
+
+    // Followers: who follows this account (usernames only — their data is
+    // not ours to hand over).
+    const followers = (
+      db
+        .prepare(
+          `SELECT f.follower_lc AS username
+             FROM follows f WHERE f.followed_lc = ? ORDER BY f.created_at DESC`,
+        )
+        .all(usernameLc) as { username: string }[]
+    ).map((r) => r.username);
+
+    res.json({
+      exportedAt: Date.now(),
+      account: self,
+      broadcasts: broadcastsRepo.historyForUser(usernameLc, 500),
+      recordings: recordingsRepo.listForUser(usernameLc).map((r) => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        sizeBytes: r.sizeBytes,
+        durationMs: r.durationMs,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+        broadcastId: r.broadcastId,
+      })),
+      reportsFiled: reportsRepo
+        .list("all", 500)
+        .filter((r) => r.reporterUsername === usernameLc),
+      followGraph: { following, followers },
+    });
   }),
 );
 
@@ -177,10 +270,22 @@ usersRouter.get(
     const user = usersRepo.getPublic(usernameLc);
     if (!user) throw notFound("user not found");
     const live = broadcastsRepo.liveWithUser(usernameLc);
+    // A gated broadcast's existence, title and audience size are themselves
+    // information the access level was chosen to conceal, so the profile card
+    // is suppressed for callers who may not see it. peerId is hidden either
+    // way; resolving happens at /sessions behind the access ladder.
+    const maySeeLive =
+      !!live &&
+      broadcastsRepo.canViewMetadata(
+        live.access,
+        usernameLc,
+        req.auth?.usernameLc ?? null,
+      );
     const out: UserProfileResponse = {
       user,
-      // Hide the peerId here; resolving happens via /sessions to enforce access.
-      live: live ? { ...live, peerId: null } : null,
+      live: maySeeLive
+        ? { ...(live as NonNullable<typeof live>), peerId: null }
+        : null,
     };
     res.json(out);
   }),
@@ -233,6 +338,16 @@ usersRouter.post(
     }
     const target = usersRepo.getRaw(usernameLc);
     if (!target) throw notFound("user not found");
+    // Refuse to build a notification edge to an account that cannot be
+    // followed meaningfully. A banned user cannot broadcast (so the follow
+    // only ever fans out to nothing), and an undiscoverable user has opted out
+    // of being found — honouring that opt-out matters more than letting the
+    // edge exist. Without this the edge also survives a later unban, quietly
+    // re-arming push notifications the user never re-consented to.
+    if (target.banned) throw forbidden("this account is suspended");
+    if (!target.discoverable) {
+      throw notFound("user not found");
+    }
     notificationsRepo.follow(req.auth!.usernameLc, usernameLc);
     res.json({ ok: true, following: true });
   }),

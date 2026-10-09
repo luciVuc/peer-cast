@@ -11,7 +11,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { PASSWORD_MIN } from "@peer-cast/shared";
+import { PASSWORD_MAX, PASSWORD_MIN } from "@peer-cast/shared";
 import {
   hashPassword,
   revokeAllRefreshTokens,
@@ -175,7 +175,10 @@ emailRouter.post(
 
 const resetSchema = z.object({
   token: z.string().min(1),
-  newPassword: z.string().min(PASSWORD_MIN),
+  newPassword: z
+    .string()
+    .min(PASSWORD_MIN)
+    .max(PASSWORD_MAX, `password must be at most ${PASSWORD_MAX} characters`),
 });
 
 emailRouter.post(

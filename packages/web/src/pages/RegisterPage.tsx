@@ -85,7 +85,9 @@ export function RegisterPage() {
         )}
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="label">Display name</label>
+            <label className="label" htmlFor="reg-displayName">
+              Display name
+            </label>
             <input
               id="reg-displayName"
               className="input"
@@ -94,7 +96,9 @@ export function RegisterPage() {
             />
           </div>
           <div>
-            <label className="label">Username</label>
+            <label className="label" htmlFor="reg-username">
+              Username
+            </label>
             <input
               id="reg-username"
               className="input"
@@ -109,7 +113,9 @@ export function RegisterPage() {
             )}
           </div>
           <div>
-            <label className="label">Email</label>
+            <label className="label" htmlFor="reg-email">
+              Email
+            </label>
             <input
               id="reg-email"
               className="input"
@@ -119,7 +125,9 @@ export function RegisterPage() {
             />
           </div>
           <div>
-            <label className="label">Password</label>
+            <label className="label" htmlFor="reg-password">
+              Password
+            </label>
             <input
               id="reg-password"
               className="input"
@@ -143,7 +151,9 @@ export function RegisterPage() {
           />
           {mode === "invite" && (
             <div>
-              <label className="label">Invite code</label>
+              <label className="label" htmlFor="reg-invite">
+                Invite code
+              </label>
               <input
                 id="reg-invite"
                 className="input"
@@ -154,7 +164,9 @@ export function RegisterPage() {
             </div>
           )}
           <div>
-            <label className="label">Admin bootstrap secret (optional)</label>
+            <label className="label" htmlFor="reg-adminBootstrapSecret">
+              Admin bootstrap secret (optional)
+            </label>
             <input
               id="reg-adminBootstrapSecret"
               className="input"

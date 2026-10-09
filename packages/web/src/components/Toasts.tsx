@@ -42,9 +42,14 @@ function ToastItem({
     return () => clearTimeout(t);
   }, [id, duration, dispatch]);
 
+  // Errors use role="alert" (assertive) because a failed save must interrupt;
+  // everything else is a live="polite" status. Previously EVERY toast was a
+  // role="alert" inside an aria-live="polite" region — so each one was
+  // announced twice, and failures were announced politely enough to be missed
+  // entirely by a screen-reader user who had moved on.
   return (
     <div
-      role="alert"
+      role={variant === "error" ? "alert" : "status"}
       className={`flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg shadow-black/30 backdrop-blur transition-all ${COLORS[variant]}`}
     >
       <span className={`mt-0.5 shrink-0 font-bold ${ICON_COLORS[variant]}`}>
@@ -67,8 +72,10 @@ export function Toasts() {
   const toasts = useAppSelector((s) => s.toast.toasts);
   if (!toasts.length) return null;
   return (
+    // role="status" + aria-live="polite" on the tray itself. Each ToastItem
+    // carries role="status" (or "alert" for errors) for its own announcement.
     <div
-      role="region"
+      role="status"
       aria-label="Notifications"
       aria-live="polite"
       aria-atomic="false"

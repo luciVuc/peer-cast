@@ -7,7 +7,7 @@ import type {
 } from "@peer-cast/shared";
 import { badRequest, forbidden, notFound } from "../lib/errors.js";
 import { asyncHandler } from "../middleware/error.js";
-import { requireAuth } from "../middleware/auth.js";
+import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { broadcastsRepo } from "../repos/broadcasts.js";
 import { notifyFollowersLive } from "../lib/push.js";
 
@@ -136,10 +136,23 @@ broadcastsRouter.post(
 
 broadcastsRouter.get(
   "/:id",
+  optionalAuth,
   asyncHandler(async (req, res) => {
     const b = broadcastsRepo.getWithUser(req.params.id);
     if (!b) throw notFound("broadcast not found");
-    // Never leak peerId here; resolving is done via /sessions with access checks.
+    // Withhold peerId here (resolving happens at /sessions, behind the access
+    // ladder). Also withhold the broadcast entirely — title, owner, and
+    // audience size are themselves information the access level was chosen to
+    // conceal, so an anonymous caller gets 404 rather than a redacted card.
+    if (
+      !broadcastsRepo.canViewMetadata(
+        b.access,
+        b.owner.username.toLowerCase(),
+        req.auth?.usernameLc ?? null,
+      )
+    ) {
+      throw notFound("broadcast not found");
+    }
     res.json({ broadcast: { ...b, peerId: null } });
   }),
 );

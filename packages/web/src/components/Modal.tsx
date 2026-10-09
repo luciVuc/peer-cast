@@ -3,9 +3,10 @@ import { type ReactNode, useEffect, useRef } from "react";
 /** A simple centered modal dialog with a backdrop.
  *
  * Accessibility:
- *  - Traps focus inside the dialog on open.
+ *  - Traps focus inside the dialog (Tab / Shift+Tab cycle within it).
  *  - Restores focus to the trigger element on close.
  *  - Closes on Escape keypress.
+ *  - Locks background scroll while open.
  */
 export function Modal({
   open = true,
@@ -44,15 +45,56 @@ export function Modal({
     };
   }, [open]);
 
-  // Close on Escape key.
+  // Escape to close, plus a real focus trap.
+  //
+  // The previous implementation only moved focus *into* the dialog once on
+  // open; nothing intercepted Tab, so a keyboard user tabbed straight out of
+  // the dialog into the page behind (still in the tab order and not `inert`),
+  // landing on background controls like "End broadcast" with no visual context.
+  // Cycle focus between the first and last focusable elements instead.
   useEffect(() => {
     if (!open) return;
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter(
+        (el) => el.offsetParent !== null || el === document.activeElement,
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (
+        e.shiftKey &&
+        (active === first || !dialogRef.current?.contains(active))
+      ) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
+
+  // Lock background scroll while the dialog is open, matching the drawer.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
 
   if (!open) return null;
 

@@ -21,6 +21,9 @@ import {
 import { useAppSelector } from "../store";
 import { connectAsViewer, type ViewerHandle } from "../lib/peer";
 
+/** How long an embed keeps auto-retrying after a drop (see retryDeadlineRef). */
+const RETRY_WINDOW_MS = 5 * 60_000;
+
 type Phase =
   | "resolving"
   | "offline"
@@ -41,6 +44,12 @@ export function EmbedPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const handleRef = useRef<ViewerHandle | null>(null);
   const disposedRef = useRef(false);
+  // Bound the auto-reconnect loop. `/api/sessions` is rate limited, so an
+  // unbounded backoff-forever loop eventually spends the viewer's budget on a
+  // host that is never coming back and then hard-429s real viewers. This was
+  // previously uncapped here (unlike ViewerPage, which has had a window all
+  // along) — roughly 2,880 requests/day per embed from a background tab.
+  const retryDeadlineRef = useRef(0);
   const startedRef = useRef(false);
   const resolvingRef = useRef(false);
   const reconnectTimer = useRef<number | null>(null);
@@ -71,6 +80,7 @@ export function EmbedPage() {
           void videoRef.current.play().catch(() => {});
         }
         reconnectDelay.current = 3000;
+        retryDeadlineRef.current = Date.now() + RETRY_WINDOW_MS;
         setPhase("playing");
       },
       onError: () => {
@@ -79,6 +89,12 @@ export function EmbedPage() {
       },
       onClose: () => {
         if (disposedRef.current || handleRef.current !== handle) return;
+        if (Date.now() >= retryDeadlineRef.current) {
+          // Window spent — stop polling. An embed has no Retry affordance, so
+          // stop quietly rather than burn the shared rate-limit budget.
+          setPhase("offline");
+          return;
+        }
         const delay = reconnectDelay.current;
         reconnectDelay.current = Math.min(delay * 2, 30_000);
         setPhase("resolving");

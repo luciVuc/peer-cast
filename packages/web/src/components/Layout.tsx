@@ -12,21 +12,26 @@ import { broadcastStopped } from "../store/broadcastSlice";
 import { broadcastService } from "../lib/broadcastService";
 import { useEndBroadcastMutation, useGetConfigQuery, api } from "../store/api";
 import { Avatar } from "./Avatar";
+import { Modal } from "./Modal";
+import { addToast } from "../store/toastSlice";
 
 function DrawerLink({
   to,
   children,
   onClose,
+  className = "",
 }: {
   to: string;
   children: React.ReactNode;
   onClose: () => void;
+  /** Extra classes appended to the shared row styling. */
+  className?: string;
 }) {
   return (
     <Link
       to={to}
       onClick={onClose}
-      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-ink-600 focus:outline-none focus:ring-2 focus:ring-brand-500/60"
+      className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-ink-600 focus:outline-none focus:ring-2 focus:ring-brand-500/60 ${className}`}
     >
       {children}
     </Link>
@@ -67,6 +72,19 @@ export function Layout() {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [drawerQ, setDrawerQ] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  // Pending "an update is available" confirmation, rendered as a Modal.
+  const [updatePrompt, setUpdatePrompt] = useState<{
+    latest: string;
+    current: string;
+  } | null>(null);
+
+  async function applyUpdate() {
+    setUpdatePrompt(null);
+    await navigator.serviceWorker
+      ?.getRegistration()
+      ?.then((registration) => registration?.update());
+    window.location.reload();
+  }
 
   // Close drawer on route change
   useEffect(() => {
@@ -86,6 +104,18 @@ export function Layout() {
         document.body.style.overflow = "";
       };
     }
+  }, [drawerOpen]);
+
+  // Escape closes the drawer. The drawer is an aria-modal dialog, so it has to
+  // behave like one — this was previously only closable via the backdrop or the
+  // close button, and it was unreachable for signed-out users anyway.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDrawerOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
   function onSearch(e: React.FormEvent) {
@@ -145,23 +175,30 @@ export function Layout() {
         await navigator.serviceWorker
           ?.getRegistration()
           ?.then((registration) => registration?.update());
-        window.alert(
-          `PeerCast ${currentVersion ?? latest.version ?? ""} is up to date.`,
+        dispatch(
+          addToast(
+            `PeerCast ${currentVersion ?? latest.version ?? ""} is up to date.`,
+            "success",
+          ),
         );
         return;
       }
 
-      const shouldUpdate = window.confirm(
-        `PeerCast ${latest.version} is available (you have ${currentVersion}). Update now?`,
-      );
-      if (!shouldUpdate) return;
+      // A Modal + toast rather than window.confirm/alert: blocking dialogs break
+      // PWA standalone mode, cannot be styled, and in some embedded contexts
+      // cannot be dismissed from the keyboard.
+      setUpdatePrompt({
+        latest: latest.version,
+        current: currentVersion ?? "?",
+      });
+      return;
 
       await navigator.serviceWorker
         ?.getRegistration()
         ?.then((registration) => registration?.update());
       window.location.reload();
     } catch {
-      window.alert("Unable to check for updates right now.");
+      dispatch(addToast("Unable to check for updates right now.", "error"));
     } finally {
       setCheckingUpdate(false);
     }
@@ -282,11 +319,18 @@ export function Layout() {
                 </button>
               </>
             ) : (
+              /* Hidden below `sm`: on a phone these two buttons plus the logo
+               * plus the burger crowd the top bar, and both destinations are in
+               * the drawer (see the signed-out branch there). Still rendered,
+               * just not shown, so there is no second copy in the DOM. */
               <>
-                <Link to="/login" className="btn-ghost">
+                <Link to="/login" className="btn-ghost hidden sm:inline-flex">
                   Sign in
                 </Link>
-                <Link to="/register" className="btn-primary">
+                <Link
+                  to="/register"
+                  className="btn-primary hidden sm:inline-flex"
+                >
                   Register
                 </Link>
               </>
@@ -339,7 +383,7 @@ export function Layout() {
       )}
 
       {/* ─── Mobile drawer ────────────────────────────────────────────────── */}
-      {user && drawerOpen && (
+      {drawerOpen && (
         <>
           {/* Backdrop */}
           <div
@@ -354,9 +398,9 @@ export function Layout() {
             aria-modal="true"
             className="fixed inset-y-0 right-0 z-40 flex w-72 flex-col bg-ink-900 shadow-2xl shadow-black/40 sm:hidden"
           >
-            {/* Drawer header: close button + user info */}
+            {/* Drawer header: close button + user info (or brand when signed out) */}
             <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-              {user && (
+              {user ? (
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar user={user} size={44} />
                   <div className="min-w-0">
@@ -368,6 +412,8 @@ export function Layout() {
                     </div>
                   </div>
                 </div>
+              ) : (
+                <span className="font-bold">📡 PeerCast</span>
               )}
               <button
                 ref={closeRef}
@@ -400,38 +446,72 @@ export function Layout() {
                 />
               </form>
 
-              <div className="space-y-1">
-                <DrawerLink
-                  to="/dashboard"
-                  onClose={() => setDrawerOpen(false)}
-                >
-                  Dashboard
-                </DrawerLink>
-                {user.role === "admin" && (
-                  <DrawerLink to="/admin" onClose={() => setDrawerOpen(false)}>
-                    Admin
+              {user ? (
+                <>
+                  <div className="space-y-1">
+                    <DrawerLink
+                      to="/dashboard"
+                      onClose={() => setDrawerOpen(false)}
+                    >
+                      Dashboard
+                    </DrawerLink>
+                    <DrawerLink
+                      to="/broadcast"
+                      onClose={() => setDrawerOpen(false)}
+                    >
+                      Go live
+                    </DrawerLink>
+                    {user.role === "admin" && (
+                      <DrawerLink
+                        to="/admin"
+                        onClose={() => setDrawerOpen(false)}
+                      >
+                        Admin
+                      </DrawerLink>
+                    )}
+                  </div>
+
+                  <div className="my-4 border-t border-white/5" />
+
+                  <DrawerButton onClick={signOut}>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4 text-slate-500"
+                    >
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                    Sign out
+                  </DrawerButton>
+                </>
+              ) : (
+                /* Signed out: the header's Sign in / Register buttons are
+                 * hidden below `sm` to keep the top bar from crowding, so they
+                 * must reappear here or an anonymous visitor on a phone has no
+                 * way to sign in at all. */
+                <div className="space-y-2">
+                  <DrawerLink
+                    to="/login"
+                    onClose={() => setDrawerOpen(false)}
+                    className="justify-center font-semibold"
+                  >
+                    Sign in
                   </DrawerLink>
-                )}
-              </div>
-
-              <div className="my-4 border-t border-white/5" />
-
-              <DrawerButton onClick={signOut}>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-4 w-4 text-slate-500"
-                >
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
-                Sign out
-              </DrawerButton>
+                  <DrawerLink
+                    to="/register"
+                    onClose={() => setDrawerOpen(false)}
+                    className="justify-center bg-brand-600 font-semibold text-white hover:bg-brand-500"
+                  >
+                    Create account
+                  </DrawerLink>
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -458,6 +538,34 @@ export function Layout() {
             : `v${appConfig?.version ?? "…"}`}
         </button>
       </footer>
+
+      {updatePrompt && (
+        <Modal
+          title="Update available"
+          onClose={() => setUpdatePrompt(null)}
+          actions={
+            <>
+              <button
+                className="btn-ghost"
+                onClick={() => setUpdatePrompt(null)}
+              >
+                Later
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => void applyUpdate()}
+              >
+                Update now
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-300">
+            PeerCast {updatePrompt.latest} is available (you have{" "}
+            {updatePrompt.current}). The page will reload to apply it.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }

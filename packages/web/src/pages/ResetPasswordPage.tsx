@@ -66,8 +66,11 @@ export function ResetPasswordPage() {
         </p>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="label">New password</label>
+            <label className="label" htmlFor="reset-password">
+              New password
+            </label>
             <input
+              id="reset-password"
               className="input"
               type="password"
               autoFocus
@@ -82,8 +85,11 @@ export function ResetPasswordPage() {
             )}
           </div>
           <div>
-            <label className="label">Confirm password</label>
+            <label className="label" htmlFor="reset-confirm">
+              Confirm password
+            </label>
             <input
+              id="reset-confirm"
               className="input"
               type="password"
               value={confirm}

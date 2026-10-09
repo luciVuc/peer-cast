@@ -68,13 +68,21 @@ export async function sendEmail(opts: MailOptions): Promise<void> {
 
 // ─── Templates ───────────────────────────────────────────────────────────────
 
-/** Escape user-controlled strings before interpolating into email HTML. */
+/**
+ * Escape user-controlled strings before interpolating into email HTML.
+ *
+ * `'` is escaped as well even though every current template interpolates only
+ * into double-quoted attributes and text nodes: omitting it means the next
+ * template that reaches for a single-quoted attribute silently reintroduces an
+ * injection, and the omission is invisible in review.
+ */
 function esc(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function wrap(title: string, body: string): string {

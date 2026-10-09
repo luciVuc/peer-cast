@@ -254,7 +254,7 @@ db.exec(
 // Rows that already have a /api/avatars/... URL are skipped.
 export function migrateAvatars(): void {
   // Fire-and-forget: dynamic import avoids circular deps at module init time.
-  void import("../lib/avatar.js").then(({ saveAvatar }) => {
+  void import("../lib/avatar.js").then(async ({ saveAvatar }) => {
     try {
       const avatarRows = db
         .prepare(
@@ -263,7 +263,9 @@ export function migrateAvatars(): void {
         .all() as { username_lc: string; avatar_url: string }[];
       for (const r of avatarRows) {
         try {
-          const url = saveAvatar(r.username_lc, r.avatar_url);
+          // saveAvatar is async now (sharp decode + re-encode strips EXIF),
+          // so migrate row-by-row.
+          const url = await saveAvatar(r.username_lc, r.avatar_url);
           db.prepare(
             `UPDATE users SET avatar_url = ? WHERE username_lc = ?`,
           ).run(url, r.username_lc);

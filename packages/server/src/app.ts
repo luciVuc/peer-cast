@@ -75,7 +75,11 @@ function deriveIceCspHosts(): string[] {
 export function configureApp(app: Express, opts: AppOptions = {}): Express {
   const { httpServer, rateLimiting = true, quiet = false } = opts;
 
-  app.set("trust proxy", config.isProd ? 1 : false);
+  // Explicit, not inferred from NODE_ENV. See config.trustProxyHops: this
+  // value decides `req.ip`, which is the key for every IP-rate-limited
+  // endpoint. Default 0 means a client cannot spoof its own X-Forwarded-For to
+  // escape login/register/code-guessing limits.
+  app.set("trust proxy", config.trustProxyHops);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -97,7 +101,15 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
           upgradeInsecureRequests: config.signal.secure ? [] : null,
         },
       },
-      hsts: config.signal.secure ? undefined : false,
+      // Keyed off TRUST_PROXY_HOPS rather than signal.secure: those are
+      // independent facts, and an operator who terminates TLS at a proxy sets
+      // TRUST_PROXY_HOPS=1 while PUBLIC_SECURE describes what clients see. Tying
+      // HSTS to PUBLIC_SECURE silently dropped the header for exactly the
+      // proxied deployments that need it most.
+      hsts:
+        config.trustProxyHops > 0 || config.signal.secure
+          ? { maxAge: 31_536_000, includeSubDomains: true }
+          : false,
       crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
@@ -334,8 +346,36 @@ export function configureApp(app: Express, opts: AppOptions = {}): Express {
           !String((req.query as Record<string, string>)?.code ?? ""),
       ),
     );
+    // Second, coarser code-guess limiter keyed on the *username alone*, with
+    // no IP component. The per-(IP, username) limiter above is trivially
+    // multiplied by source address: an attacker with a rotating IP pool gets an
+    // unbounded aggregate budget against a single broadcaster's code. This one
+    // cannot be spread, so a distributed guessing run still hits a ceiling —
+    // deliberately generous (50) so one household behind a NAT, or a viewer
+    // mistyping their code repeatedly, never trips it.
+    app.use(
+      "/api/sessions",
+      mkLim(
+        "code-attempt-user",
+        15 * 60_000,
+        50,
+        (req) => {
+          const username =
+            (req.params as Record<string, string>)?.username ??
+            req.path.split("/")[1] ??
+            "";
+          return `code-user:${username.toLowerCase()}`;
+        },
+        true, // only count non-2xx, matching the per-IP bucket
+        (req) => !String((req.query as Record<string, string>)?.code ?? ""),
+      ),
+    );
     // Reports: 10/h per IP.
     app.use("/api/reports", mkLim("report-ip", 60 * 60_000, 10));
+    // Search: 60/15 min per IP. Unauthenticated and it feeds a LIKE '%…%'
+    // full-table scan on both users and broadcasts, so it needs a ceiling of
+    // its own — it is not covered by any other mount.
+    app.use("/api/users/search", mkLim("search-ip", 15 * 60_000, 60));
     // Follow writes: 60/15 min per IP (prevents follow-graph spam).
     // Scoped to POST: a prefix mount would also cap DELETE /follow, so an
     // account unfollowing in bulk (or a user cleaning up several accounts)

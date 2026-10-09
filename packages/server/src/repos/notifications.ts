@@ -37,9 +37,30 @@ export function isFollowing(followerLc: string, followedLc: string): boolean {
 
 // ─── Push subscriptions ──────────────────────────────────────────────────
 
+/** True when `endpoint` is already registered to a *different* account. */
+export function isEndpointOwnedByOther(
+  endpoint: string,
+  usernameLc: string,
+): boolean {
+  const row = db
+    .prepare(`SELECT username_lc FROM push_subscriptions WHERE endpoint = ?`)
+    .get(endpoint) as { username_lc: string } | undefined;
+  return !!row && row.username_lc !== usernameLc;
+}
+
 /** Upsert a Web Push subscription for a user (one per browser endpoint).
- *  On endpoint conflict the owner is reassigned to the latest subscriber so a
- *  re-registered endpoint can never keep pushing to a previous account. */
+ *
+ *  The upsert keeps a *same-owner* rotation working: a user switching browsers
+ *  re-registers the same endpoint with fresh keys and must keep receiving
+ *  their own notifications.
+ *
+ *  Cross-account reassignment is refused by the caller (see isEndpointOwnedByOther).
+ *  Reassigning on conflict was previously done unconditionally, which is safe
+ *  for the intended same-user case but a takeover in every other one: push
+ *  endpoints appear in browser storage and in push-service URLs, so anyone who
+ *  learns one could re-register it under their own account and start receiving
+ *  that account's go-live notifications.
+ */
 export function saveSubscription(
   usernameLc: string,
   sub: PushSubscriptionRow,
@@ -48,9 +69,9 @@ export function saveSubscription(
     `INSERT INTO push_subscriptions (endpoint, username_lc, p256dh, auth, created_at)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(endpoint) DO UPDATE SET
-       username_lc = excluded.username_lc,
        p256dh = excluded.p256dh,
-       auth = excluded.auth`,
+       auth = excluded.auth
+     WHERE push_subscriptions.username_lc = excluded.username_lc`,
   ).run(sub.endpoint, usernameLc, sub.p256dh, sub.auth, Date.now());
 }
 
@@ -92,6 +113,7 @@ export default {
   unfollow,
   isFollowing,
   saveSubscription,
+  isEndpointOwnedByOther,
   removeSubscription,
   removeOwnedSubscription,
   subscriptionsForFollowers,

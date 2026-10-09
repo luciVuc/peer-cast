@@ -121,6 +121,14 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
    by default; only `GET /api/sessions/:username` reveals it (after access
    checks) by reading `peer_id` directly from the raw row.
 
+   **Withholding `peerId` is not enough for a gated broadcast.** Existence,
+   title, owner and audience size are themselves what `access: code` /
+   `authenticated` was chosen to conceal. Discovery queries therefore filter on
+   `access = 'public'`, and `GET /api/broadcasts/:id` plus the profile live card
+   return 404 / null for callers who may not see the stream
+   (`broadcastsRepo.canViewMetadata`). Keep all three together — adding a
+   discovery query without the `access` filter re-leaks gated streams.
+
 4. **Two-gate access control must stay intact.** (1) server withholds peerId +
    issues ticket; (2) broadcaster host verifies the ticket per call via
    `/api/sessions/verify-ticket`. Gate 1 alone is insufficient. Gate 2 must
@@ -144,6 +152,15 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
 
 8. **HTTPS is mandatory in production.** `getDisplayMedia` + secure WebRTC
    require a secure context. Set `PUBLIC_SECURE=true` behind TLS.
+
+   **`TRUST_PROXY_HOPS` is a security control, not a convenience setting.** It
+   sets `req.ip`, the key for every IP-rate-limited endpoint. Default `0`
+   (trust nothing) is correct for direct connections; an operator terminating
+   TLS at Caddy/nginx MUST set it to their hop count or every visitor behind
+   the proxy shares one bucket and locks each other out. Never infer it from
+   `NODE_ENV` — there is no safe default, so it is explicit and logged at boot.
+   HSTS is keyed off this (plus `PUBLIC_SECURE`), not off `PUBLIC_SECURE`
+   alone, so a proxied deploy still gets the header.
 
 9. **Extension pages are plain, self-contained.** `popup.*` uses hand-written
    CSS (no Tailwind build). `api-client.js` is a global (`var PeerCastApi`) so
@@ -236,11 +253,29 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     back to zero — strict reuse detection signs multi-tab users out of every
     session at once, which is the bug the window exists to prevent.
 
-22. **Rate limits are sized for the endpoint's real traffic, keyed per user when
+22. **Access codes and secrets are hashed with a work factor.** Access codes are
+    `bcrypt$`-prefixed digests (cost 10), never unsalted SHA-256: `ACCESS_CODE_MIN`
+    is 6 human-chosen characters, so a bare digest is a seconds-long offline
+    dictionary attack for anyone holding the DB file. Legacy `sha256$` and
+    plaintext rows stay verifiable and self-heal on re-broadcast. Code guessing
+    is limited twice — per `(IP, username)` (5/15 min) _and_ per username alone
+    (50/15 min) — because the per-IP bucket is trivially multiplied by rotating
+    source addresses. Same reasoning for the admin bootstrap secret, which is
+    compared with `timingSafeEqual`, never `===`.
+
+23. **Avatars are re-encoded, never stored as uploaded.** `saveAvatar` is async:
+    it decodes with `sharp` and re-encodes to PNG, which strips EXIF/GPS/device
+    metadata and normalises polyglots. A phone photo carries coordinates, is
+    stored indefinitely and served publicly with a long immutable cache — write
+    the client's bytes verbatim and that becomes a standing doxxing surface.
+
+24. **Rate limits are sized for the endpoint's real traffic, keyed per user when
     possible.** `app.use` is a prefix mount, so a limiter mounted on a path
     silently covers every sub-route under it — two limiters got mis-scoped this
     way (`/api/broadcasts` swallowed the 2 s `stats` heartbeat, `/api/sessions`
-    swallowed `verify-ticket`). Scope with an explicit method + `req.path` test
+    swallowed `verify-ticket`, `/api/recordings` swallowed chunk uploads,
+    `/api/push/subscribe` + `/api/users/:u/follow` swallowed their DELETEs).
+    Scope with an explicit method + `req.path` test
     (relative to the mount) rather than assuming the mount means one endpoint.
     Beyond that:
     - **Key viewer-facing endpoints per authenticated user, falling back to IP.**

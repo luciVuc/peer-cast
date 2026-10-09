@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { AdminUser, BroadcastWithUser, Report } from "@peer-cast/shared";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 import { Spinner } from "../components/Spinner";
 import { IllustratedMessage } from "../components/IllustratedMessage";
+import { useAppDispatch } from "../store";
+import { addToast, errorMessage } from "../store/toastSlice";
 import {
   useAdminAuditLogQuery,
   useAdminInvitesQuery,
@@ -22,6 +24,27 @@ import {
 } from "../store/api";
 
 type Tab = "metrics" | "users" | "reports" | "live" | "invites" | "audit";
+
+const TABS: readonly Tab[] = [
+  "metrics",
+  "users",
+  "reports",
+  "live",
+  "invites",
+  "audit",
+];
+
+/**
+ * Validate ?tab= against the real tab set.
+ *
+ * `params.get("tab") as Tab` is a compile-time assertion with no runtime
+ * check, so a stale bookmark, a typo, or a hand-edited URL renders the tab bar
+ * and headings over an empty white panel — a blank admin console, which is a
+ * bad failure mode during an incident.
+ */
+function parseTab(raw: string | null): Tab {
+  return TABS.includes(raw as Tab) ? (raw as Tab) : "metrics";
+}
 
 function fmt(ms: number) {
   return new Date(ms).toLocaleString();
@@ -133,8 +156,9 @@ function MetricsTab() {
 // ─── Users tab ──────────────────────────────────────────────────────────
 
 function UsersTab() {
+  const dispatch = useAppDispatch();
   const [q, setQ] = useState("");
-  const { data, isFetching } = useAdminUsersQuery(q);
+  const { data, isFetching, error } = useAdminUsersQuery(q);
   const [ban] = useBanUserMutation();
   const [unban, { isLoading: unbanning }] = useUnbanUserMutation();
   const [setRole, { isLoading: settingRole }] = useSetUserRoleMutation();
@@ -157,9 +181,13 @@ function UsersTab() {
       await ban({
         username: banTarget.username,
         reason: banReason || undefined,
-      });
+      }).unwrap();
       setBanTarget(null);
       setBanReason("");
+    } catch (err) {
+      // A silently failed ban is the worst outcome for a moderation action:
+      // the admin believes the account is suspended and it is not.
+      dispatch(addToast(errorMessage(err, "Could not ban user"), "error"));
     } finally {
       setBanning(false);
     }
@@ -167,11 +195,23 @@ function UsersTab() {
 
   async function confirmRoleChange() {
     if (!roleTarget || settingRole) return;
-    await setRole({
-      username: roleTarget.user.username,
-      role: roleTarget.role,
-    });
-    setRoleTarget(null);
+    try {
+      await setRole({
+        username: roleTarget.user.username,
+        role: roleTarget.role,
+      }).unwrap();
+      setRoleTarget(null);
+    } catch (err) {
+      dispatch(addToast(errorMessage(err, "Could not change role"), "error"));
+    }
+  }
+
+  async function doUnban(username: string) {
+    try {
+      await unban(username).unwrap();
+    } catch (err) {
+      dispatch(addToast(errorMessage(err, "Could not unban user"), "error"));
+    }
   }
 
   return (
@@ -184,6 +224,13 @@ function UsersTab() {
       />
       {isFetching && !data ? (
         <Spinner label="Loading users…" />
+      ) : error ? (
+        // Without this branch an API 500 renders "No users found." — telling
+        // an admin looking for a banned user during an incident that the
+        // account does not exist.
+        <p className="card p-6 text-center text-sm text-red-400">
+          {errorMessage(error, "Could not load users.")}
+        </p>
       ) : (
         <div className="card divide-y divide-white/5">
           {(data?.users ?? []).map((u) => (
@@ -220,7 +267,7 @@ function UsersTab() {
                     <button
                       className="btn btn-ghost"
                       disabled={unbanning}
-                      onClick={() => unban(u.username)}
+                      onClick={() => void doUnban(u.username)}
                     >
                       {unbanning ? "…" : "Unban"}
                     </button>
@@ -291,8 +338,11 @@ function UsersTab() {
             This revokes their sessions, force-ends any live broadcast, and
             blocks login + signaling. You can unban later.
           </p>
-          <label className="label">Reason (optional)</label>
+          <label className="label" htmlFor="adm-ban-reason">
+            Reason (optional)
+          </label>
           <textarea
+            id="adm-ban-reason"
             className="input"
             rows={3}
             autoFocus
@@ -345,8 +395,28 @@ function UsersTab() {
 // ─── Reports tab ────────────────────────────────────────────────────────
 
 function ReportRow({ r }: { r: Report }) {
+  const dispatch = useAppDispatch();
   const [resolve, { isLoading: resolving }] = useResolveReportMutation();
   const [ban, { isLoading: banning }] = useBanUserMutation();
+
+  // Moderation actions must report failure. These fire-and-forget handlers
+  // previously produced an unhandled rejection: the rejection escaped, the
+  // button looked inert, and nothing told the admin the report was still open.
+  async function act(kind: "ban" | "resolved" | "dismissed") {
+    try {
+      if (kind === "ban") {
+        await ban({
+          username: r.targetUsername,
+          reason: `report: ${r.reason}`,
+        }).unwrap();
+      } else {
+        await resolve({ id: r.id, status: kind }).unwrap();
+      }
+    } catch (err) {
+      dispatch(addToast(errorMessage(err, "Action failed"), "error"));
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-start gap-3 p-3 sm:flex-nowrap">
       <div className="min-w-0 flex-1">
@@ -379,26 +449,21 @@ function ReportRow({ r }: { r: Report }) {
           <button
             className="btn-danger"
             disabled={banning}
-            onClick={() =>
-              ban({
-                username: r.targetUsername,
-                reason: `report: ${r.reason}`,
-              })
-            }
+            onClick={() => void act("ban")}
           >
             {banning ? "…" : "Ban user"}
           </button>
           <button
             className="btn-ghost"
             disabled={resolving}
-            onClick={() => resolve({ id: r.id, status: "resolved" })}
+            onClick={() => void act("resolved")}
           >
             {resolving ? "…" : "Resolve"}
           </button>
           <button
             className="btn-ghost"
             disabled={resolving}
-            onClick={() => resolve({ id: r.id, status: "dismissed" })}
+            onClick={() => void act("dismissed")}
           >
             Dismiss
           </button>
@@ -442,8 +507,11 @@ function ReportsTab() {
 // ─── Live tab (takedown with confirmation) ──────────────────────────────
 
 function LiveTab() {
+  const dispatch = useAppDispatch();
+  // 30 s rather than 10 s: this list only changes on broadcast boundaries, so
+  // the faster poll bought nothing and six mounted cards cost 36 req/min.
   const { data, isLoading } = useListLiveQuery(undefined, {
-    pollingInterval: 10000,
+    pollingInterval: 30000,
   });
   const [takedown, { isLoading: takingDown }] = useTakedownBroadcastMutation();
   const [takedownTarget, setTakedownTarget] =
@@ -503,8 +571,17 @@ function LiveTab() {
                 className="btn-danger"
                 disabled={takingDown}
                 onClick={async () => {
-                  await takedown(takedownTarget.id);
-                  setTakedownTarget(null);
+                  try {
+                    await takedown(takedownTarget.id).unwrap();
+                    setTakedownTarget(null);
+                  } catch (err) {
+                    dispatch(
+                      addToast(
+                        errorMessage(err, "Could not take down broadcast"),
+                        "error",
+                      ),
+                    );
+                  }
                 }}
               >
                 {takingDown ? "Taking down…" : "Confirm takedown"}
@@ -529,7 +606,8 @@ function LiveTab() {
 // ─── Invites tab ────────────────────────────────────────────────────────
 
 function InvitesTab() {
-  const { data, isFetching } = useAdminInvitesQuery();
+  const dispatch = useAppDispatch();
+  const { data, isFetching, error } = useAdminInvitesQuery();
   const [create, { isLoading }] = useCreateInviteMutation();
   const [disable] = useDisableInviteMutation();
   const [note, setNote] = useState("");
@@ -537,21 +615,44 @@ function InvitesTab() {
   const [expiresInHours, setExpiresInHours] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Tracked so switching tabs mid-copy cannot setState after unmount.
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
+
   async function onCreate() {
-    await create({
-      note: note.trim() || undefined,
-      maxUses: maxUses ? Number(maxUses) : null,
-      expiresInHours: expiresInHours ? Number(expiresInHours) : null,
-    });
-    setNote("");
-    setMaxUses("");
-    setExpiresInHours("");
+    try {
+      await create({
+        note: note.trim() || undefined,
+        maxUses: maxUses ? Number(maxUses) : null,
+        expiresInHours: expiresInHours ? Number(expiresInHours) : null,
+      }).unwrap();
+      setNote("");
+      setMaxUses("");
+      setExpiresInHours("");
+    } catch (err) {
+      dispatch(addToast(errorMessage(err, "Could not create invite"), "error"));
+    }
+  }
+
+  async function doDisable(code: string) {
+    try {
+      await disable(code).unwrap();
+    } catch (err) {
+      dispatch(
+        addToast(errorMessage(err, "Could not disable invite"), "error"),
+      );
+    }
   }
 
   function copy(code: string) {
     void navigator.clipboard.writeText(code);
     setCopied(code);
-    setTimeout(() => setCopied(null), 1500);
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(null), 1500);
   }
 
   const invites = data?.invites ?? [];
@@ -598,6 +699,10 @@ function InvitesTab() {
 
       {isFetching && !data ? (
         <Spinner label="Loading invites…" />
+      ) : error ? (
+        <p className="card p-6 text-center text-sm text-red-400">
+          {errorMessage(error, "Could not load invites.")}
+        </p>
       ) : invites.length === 0 ? (
         <IllustratedMessage icon="🎟️" title="No invite codes yet" />
       ) : (
@@ -638,7 +743,7 @@ function InvitesTab() {
                 {!inv.disabled && (
                   <button
                     className="btn-ghost shrink-0"
-                    onClick={() => disable(inv.code)}
+                    onClick={() => void doDisable(inv.code)}
                   >
                     Disable
                   </button>
@@ -747,7 +852,7 @@ function AuditTab() {
 
 export function AdminPage() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as Tab) || "metrics";
+  const tab = parseTab(params.get("tab"));
   function setTab(t: Tab) {
     setParams({ tab: t }, { replace: true });
   }

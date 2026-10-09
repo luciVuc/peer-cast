@@ -144,13 +144,16 @@ describe("push subscriptions", () => {
     expect(del.status).toBe(200);
   });
 
-  it("reassigns a reused endpoint to the latest subscriber", async () => {
+  it("refuses to re-point an endpoint already owned by another account", async () => {
     const alice = await register(app, "alice");
     const bob = await register(app, "bob");
     await request(app).post("/api/push/subscribe").set(auth(alice)).send(subA);
 
-    // Same endpoint re-registered with bob's keys — ownership must flip.
-    await request(app)
+    // Regression: this used to be a silent reassignment ("ownership must
+    // flip"). Push endpoints appear in browser storage and in push-service
+    // URLs, so anyone who learns one could re-register it under their own
+    // account and start receiving that account's go-live notifications.
+    const steal = await request(app)
       .post("/api/push/subscribe")
       .set(auth(bob))
       .send({
@@ -159,6 +162,7 @@ describe("push subscriptions", () => {
           keys: { p256dh: "Ym9iLWtleXM", auth: "Ym9iLWF1dGg" },
         },
       });
+    expect(steal.status).toBe(403);
 
     const { db } = await import("../src/db/index.js");
     const row = db
@@ -167,8 +171,38 @@ describe("push subscriptions", () => {
       )
       .get("https://push.example/push-1") as
       { username_lc: string; p256dh: string } | undefined;
-    expect(row?.username_lc).toBe("bob");
-    expect(row?.p256dh).toBe("Ym9iLWtleXM");
+    // Alice keeps both ownership and her original keys.
+    expect(row?.username_lc).toBe("alice");
+    expect(row?.p256dh).not.toBe("Ym9iLWtleXM");
+  });
+
+  it("still lets one account rotate its own endpoint keys", async () => {
+    const alice = await register(app, "alice");
+    await request(app).post("/api/push/subscribe").set(auth(alice)).send(subA);
+
+    // Same user, same endpoint, refreshed keys (browser rotation) — this must
+    // keep working, otherwise a user changing browsers silently stops getting
+    // their own notifications.
+    const again = await request(app)
+      .post("/api/push/subscribe")
+      .set(auth(alice))
+      .send({
+        subscription: {
+          endpoint: "https://push.example/push-1",
+          keys: { p256dh: "bmV3LWtleXM", auth: "bmV3LWF1dGg" },
+        },
+      });
+    expect(again.status).toBe(200);
+
+    const { db } = await import("../src/db/index.js");
+    const row = db
+      .prepare(
+        `SELECT username_lc, p256dh FROM push_subscriptions WHERE endpoint = ?`,
+      )
+      .get("https://push.example/push-1") as
+      { username_lc: string; p256dh: string } | undefined;
+    expect(row?.username_lc).toBe("alice");
+    expect(row?.p256dh).toBe("bmV3LWtleXM");
   });
 
   it("scopes unsubscribe to the owning account", async () => {

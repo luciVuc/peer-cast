@@ -329,6 +329,20 @@ export const usersRepo = {
       db.prepare(`DELETE FROM invites              WHERE created_by = ?`).run(
         usernameLc,
       );
+      // audit_log has no FK to users, so the handle would otherwise survive a
+      // GDPR erasure request indefinitely and stay readable to any admin via
+      // /admin/audit. Redact rather than delete: the moderation trail is worth
+      // keeping (it records that *an* account was banned), but the identifier
+      // is what makes it personal data. A sentinel keeps the column non-null
+      // and makes the redaction obvious to anyone reading the log.
+      db.prepare(
+        `UPDATE audit_log SET target = '[redacted]', detail = NULL
+           WHERE target = ?`,
+      ).run(usernameLc);
+      db.prepare(
+        `UPDATE audit_log SET actor_username_lc = '[redacted]'
+           WHERE actor_username_lc = ?`,
+      ).run(usernameLc);
       // This also cascades to broadcasts and refresh_tokens via FK.
       db.prepare(`DELETE FROM users WHERE username_lc = ?`).run(usernameLc);
     })();

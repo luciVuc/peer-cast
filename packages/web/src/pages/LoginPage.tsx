@@ -32,8 +32,11 @@ export function LoginPage() {
         <h1 className="mb-6 text-2xl font-bold">Sign in</h1>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="label">Username</label>
+            <label className="label" htmlFor="login-username">
+              Username
+            </label>
             <input
+              id="login-username"
               className="input"
               autoFocus
               value={username}
@@ -42,8 +45,11 @@ export function LoginPage() {
             />
           </div>
           <div>
-            <label className="label">Password</label>
+            <label className="label" htmlFor="login-password">
+              Password
+            </label>
             <input
+              id="login-password"
               className="input"
               type="password"
               value={password}

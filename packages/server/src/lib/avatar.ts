@@ -11,6 +11,7 @@
  */
 
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import sharp from "sharp";
 import { resolve, dirname } from "node:path";
 import { config } from "../config.js";
 
@@ -34,17 +35,39 @@ export function avatarDir(): string {
  * Returns the server-relative URL to store as avatar_url.
  * Throws if the data URL is malformed or has an unsupported MIME type.
  */
-export function saveAvatar(usernameLc: string, dataUrl: string): string {
+export async function saveAvatar(
+  usernameLc: string,
+  dataUrl: string,
+): Promise<string> {
   const match = dataUrl.match(
     /^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/is,
   );
   if (!match) throw new Error("invalid avatar data URL");
-  const mime = match[1].toLowerCase().replace("jpeg", "jpg");
-  const ext = MIME_TO_EXT[mime] ?? "png";
   const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
 
+  // Re-encode rather than trusting the client's bytes. The allowlist above
+  // already rejects non-raster types, but a permitted format can still carry
+  // metadata: a JPEG straight off a phone retains GPS coordinates, device
+  // serial, and capture timestamps. Those bytes are stored indefinitely and
+  // served publicly from /api/avatars/ with a 7-day immutable cache, which
+  // makes an avatar a standing doxxing and GDPR-erasure surface.
+  //
+  // Decoding and re-encoding strips all metadata by construction (sharp drops
+  // EXIF/XMP/ICC unless asked to keep them) and normalises the format to PNG,
+  // which also neutralises polyglot files — a payload that is a valid image to
+  // one parser and something else to another.
+  let png: Buffer;
+  try {
+    png = await sharp(buffer, { failOn: "error" })
+      .rotate() // honour EXIF orientation before the metadata is discarded
+      .png()
+      .toBuffer();
+  } catch {
+    throw new Error("invalid avatar data URL");
+  }
+
   const dir = avatarDir();
-  const filename = `${usernameLc}.${ext}`;
+  const filename = `${usernameLc}.png`;
   const filepath = resolve(dir, filename);
 
   // Verify the resolved path stays inside the avatars directory.
@@ -54,12 +77,12 @@ export function saveAvatar(usernameLc: string, dataUrl: string): string {
 
   // Remove any previously stored avatar in other formats.
   for (const oldExt of Object.values(MIME_TO_EXT)) {
-    if (oldExt !== ext) {
+    if (oldExt !== "png") {
       rmSync(resolve(dir, `${usernameLc}.${oldExt}`), { force: true });
     }
   }
 
-  writeFileSync(filepath, buffer);
+  writeFileSync(filepath, png);
 
   // Include a timestamp cache-buster so clients fetch the new file on update.
   return `/api/avatars/${filename}?v=${Date.now()}`;

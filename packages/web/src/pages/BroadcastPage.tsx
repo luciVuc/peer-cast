@@ -41,6 +41,7 @@ export function BroadcastPage() {
   const broadcastStatus = useAppSelector((s) => s.broadcast.status);
   const active = useAppSelector((s) => s.broadcast.active);
   const stats = useAppSelector((s) => s.broadcast.stats);
+  const isLive = broadcastStatus === "live";
 
   // ── Local form state (setup fields; only relevant while idle) ───────────
   const [title, setTitle] = useState("Live broadcast");
@@ -487,6 +488,19 @@ export function BroadcastPage() {
     if (r && r.state !== "inactive") r.stop(); // the stop handler finalizes
   }
 
+  // Rehydrate host-owned UI state when this page mounts against an already
+  // running broadcast. Navigating away from /broadcast does NOT end the
+  // broadcast (deliberate — see the unmount note below), so on return the
+  // component-local chat log and muted set were empty while the host still held
+  // the truth: the transcript looked lost and the first click on a muted
+  // viewer would *unmute* them instead of muting, reading as a broken button.
+  useEffect(() => {
+    const host = broadcastService.host;
+    if (!host) return;
+    setChat(host.chatLog());
+    setMutedPeers(new Set(host.listMuted()));
+  }, [isLive]);
+
   // ── End broadcast ────────────────────────────────────────────────────────
 
   async function endLive() {
@@ -553,7 +567,6 @@ export function BroadcastPage() {
     ? `<iframe src="${embedUrl}" width="640" height="360" allowfullscreen allow="autoplay; camera; microphone"></iframe>`
     : "";
 
-  const isLive = broadcastStatus === "live";
   const isStarting = broadcastStatus === "starting";
 
   return (
@@ -625,16 +638,22 @@ export function BroadcastPage() {
           {!isLive ? (
             <div className="space-y-4">
               <div>
-                <label className="label">Title</label>
+                <label className="label" htmlFor="bc-title">
+                  Title
+                </label>
                 <input
+                  id="bc-title"
                   className="input"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </div>
               <div>
-                <label className="label">Capture source</label>
+                <label className="label" htmlFor="bc-source">
+                  Capture source
+                </label>
                 <select
+                  id="bc-source"
                   className="input"
                   value={source}
                   onChange={(e) => setSource(e.target.value as typeof source)}
@@ -658,8 +677,11 @@ export function BroadcastPage() {
                 )}
               </div>
               <div>
-                <label className="label">Who can watch</label>
+                <label className="label" htmlFor="bc-access">
+                  Who can watch
+                </label>
                 <select
+                  id="bc-access"
                   className="input"
                   value={access}
                   onChange={(e) => setAccess(e.target.value as AccessPolicy)}
@@ -673,8 +695,11 @@ export function BroadcastPage() {
               </div>
               {access === "code" && (
                 <div>
-                  <label className="label">Access code</label>
+                  <label className="label" htmlFor="bc-accessCode">
+                    Access code
+                  </label>
                   <input
+                    id="bc-accessCode"
                     className="input"
                     value={accessCode}
                     onChange={(e) => setAccessCode(e.target.value)}
@@ -725,9 +750,16 @@ export function BroadcastPage() {
                 </button>
               ) : null}
               <div>
-                <label className="label">Viewer link</label>
+                <label className="label" htmlFor="bc-viewerLink">
+                  Viewer link
+                </label>
                 <div className="flex gap-2">
-                  <input className="input" readOnly value={viewerUrl} />
+                  <input
+                    id="bc-viewerLink"
+                    className="input"
+                    readOnly
+                    value={viewerUrl}
+                  />
                   <button
                     className="btn-ghost"
                     onClick={() => {
@@ -741,9 +773,12 @@ export function BroadcastPage() {
               </div>
               {embedCode && (
                 <div>
-                  <label className="label">Embed code</label>
+                  <label className="label" htmlFor="bc-embedCode">
+                    Embed code
+                  </label>
                   <div className="flex gap-2">
                     <input
+                      id="bc-embedCode"
                       className="input font-mono text-xs"
                       readOnly
                       value={embedCode}
@@ -832,8 +867,17 @@ export function BroadcastPage() {
                       <span className="text-slate-300">{m.text}</span>
                     </div>
                     {isLive && m.senderPeerId && (
-                      <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      // group-focus-within reveals these on keyboard focus as
+                      // well as hover. Without it the buttons were focusable
+                      // but invisible (WCAG 2.4.7) — moderation was unreachable
+                      // for keyboard users, who tabbed to an invisible control
+                      // and activated it blind.
+                      <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
+                          // `title` alone gives assistive tech no accessible
+                          // name (WCAG 4.1.2); the emoji alone is not one either.
+                          aria-label={`${mutedPeers.has(m.senderPeerId) ? "Unmute" : "Mute"} ${m.from}`}
+                          aria-pressed={mutedPeers.has(m.senderPeerId)}
                           title={
                             mutedPeers.has(m.senderPeerId) ? "Unmute" : "Mute"
                           }
@@ -845,6 +889,7 @@ export function BroadcastPage() {
                           {mutedPeers.has(m.senderPeerId) ? "🔇" : "🔕"}
                         </button>
                         <button
+                          aria-label={`Kick ${m.from}`}
                           title="Kick viewer"
                           className="rounded px-1 py-0.5 text-xs text-slate-500 hover:bg-ink-700 hover:text-red-400"
                           onClick={() =>

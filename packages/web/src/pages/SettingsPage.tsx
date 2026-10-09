@@ -42,6 +42,10 @@ function Section({
   );
 }
 
+/** Server-side cap on avatars (routes/users.ts MAX_AVATAR_BYTES). Mirrored here
+ *  so an oversized pick is refused before the file is read into memory. */
+const MAX_AVATAR_BYTES = 200 * 1024;
+
 export function SettingsPage() {
   const { data: me, isLoading } = useGetMeQuery();
   const [updateProfile, profileState] = useUpdateProfileMutation();
@@ -119,6 +123,27 @@ export function SettingsPage() {
   function onAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Check before reading. readAsDataURL base64-encodes the whole file into a
+    // string and into component state, so a 12 MB phone photo means a full
+    // copy across the bridge and a long UI stall — only for the server to
+    // reject it against the same 200 KB cap. Fail fast with a clear message.
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type)) {
+      dispatch(
+        addToast("Avatar must be a PNG, JPEG, WebP or GIF image.", "error"),
+      );
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      dispatch(
+        addToast(
+          `Avatar must be under ${Math.round(MAX_AVATAR_BYTES / 1024)} KB (yours is ${Math.round(file.size / 1024)} KB).`,
+          "error",
+        ),
+      );
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       setAvatarDataUrl(reader.result as string);
@@ -283,8 +308,11 @@ export function SettingsPage() {
             </div>
           </div>
           <div>
-            <label className="label">Display name</label>
+            <label className="label" htmlFor="set-displayName">
+              Display name
+            </label>
             <input
+              id="set-displayName"
               className="input"
               value={displayName}
               onChange={(e) => {
@@ -314,8 +342,11 @@ export function SettingsPage() {
       <Section title="Broadcast defaults">
         <div className="space-y-4">
           <div>
-            <label className="label">Default title</label>
+            <label className="label" htmlFor="set-defaultTitle">
+              Default title
+            </label>
             <input
+              id="set-defaultTitle"
               className="input"
               value={settings.defaultTitle}
               onChange={(e) => {
@@ -325,8 +356,11 @@ export function SettingsPage() {
             />
           </div>
           <div>
-            <label className="label">Default access</label>
+            <label className="label" htmlFor="set-defaultAccess">
+              Default access
+            </label>
             <select
+              id="set-defaultAccess"
               className="input"
               value={settings.defaultAccess}
               onChange={(e) => {
@@ -370,8 +404,11 @@ export function SettingsPage() {
         </p>
         <div className="space-y-4">
           <div>
-            <label className="label">New email address</label>
+            <label className="label" htmlFor="set-newEmail">
+              New email address
+            </label>
             <input
+              id="set-newEmail"
               className="input"
               type="email"
               value={newEmail}
@@ -438,8 +475,11 @@ export function SettingsPage() {
       <Section title="Change password">
         <div className="space-y-4">
           <div>
-            <label className="label">Current password</label>
+            <label className="label" htmlFor="set-currentPassword">
+              Current password
+            </label>
             <input
+              id="set-currentPassword"
               className="input"
               type="password"
               value={pw.current}
@@ -450,8 +490,11 @@ export function SettingsPage() {
             />
           </div>
           <div>
-            <label className="label">New password</label>
+            <label className="label" htmlFor="set-newPassword">
+              New password
+            </label>
             <input
+              id="set-newPassword"
               className="input"
               type="password"
               value={pw.next}
@@ -539,8 +582,11 @@ export function SettingsPage() {
           This will permanently delete your account, all broadcasts, and all
           associated data. You cannot undo this.
         </p>
-        <label className="label mt-4">Confirm your password</label>
+        <label className="label mt-4" htmlFor="set-deletePassword">
+          Confirm your password
+        </label>
         <input
+          id="set-deletePassword"
           className="input"
           type="password"
           autoFocus

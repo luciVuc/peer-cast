@@ -42,8 +42,31 @@ self.addEventListener("push", (event) => {
   );
 });
 
+/**
+ * Constrain a push-supplied URL to this origin.
+ *
+ * `data.url` originates from the push payload, i.e. the server. Resolving it
+ * with `new URL(target, origin)` alone is not enough: a protocol-relative
+ * "//evil.tld/x" resolves cross-origin, and `client.navigate()` /
+ * `openWindow()` would then point a focused tab or a brand-new window at
+ * attacker-controlled content. Cheap to check, and the notification surface is
+ * exactly the kind of thing that gets abused once a server is compromised.
+ */
+function sameOriginPath(raw: string | undefined): string {
+  if (!raw) return "/";
+  try {
+    const u = new URL(raw, self.location.origin);
+    if (u.origin !== self.location.origin) return "/";
+    return u.pathname + u.search;
+  } catch {
+    return "/";
+  }
+}
+
 self.addEventListener("notificationclick", (event) => {
-  const target = (event.notification.data as { url?: string } | undefined)?.url;
+  const target = sameOriginPath(
+    (event.notification.data as { url?: string } | undefined)?.url,
+  );
   event.notification.close();
   event.waitUntil(
     (async () => {
@@ -56,13 +79,11 @@ self.addEventListener("notificationclick", (event) => {
         if ("focus" in w) {
           const client = w as WindowClient;
           await client.focus();
-          if (target) await client.navigate(target);
+          await client.navigate(target);
           return;
         }
       }
-      await self.clients.openWindow(
-        target ? new URL(target, self.location.origin).toString() : "/",
-      );
+      await self.clients.openWindow(target);
     })(),
   );
 });

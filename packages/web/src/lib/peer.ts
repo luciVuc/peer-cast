@@ -372,6 +372,18 @@ export class BroadcastHost {
   /** Peer IDs muted by the broadcaster (messages dropped, not kicked). */
   private mutedPeers = new Set<string>();
 
+  /**
+   * Bounded chat history retained by the host.
+   *
+   * The host is the relay and therefore the authority on chat, but BroadcastPage
+   * keeps a component-local copy in useState. Navigating away from /broadcast
+   * is deliberate (the broadcast survives it), so on return that copy was empty
+   * and the moderation controls — which render per message — were unreachable
+   * until somebody posted again. Retaining a short history lets the page
+   * rehydrate instead of silently losing the transcript.
+   */
+  private chatHistory: ChatMessage[] = [];
+
   constructor(opts: BroadcastHostOptions) {
     this.opts = opts;
     this.peer = new Peer(opts.peerId, peerOptions(opts.cfg, opts.token));
@@ -404,8 +416,21 @@ export class BroadcastHost {
     call.answer(this.opts.stream);
     this.calls.add(call);
     this.totalConnections++;
-    call.on("close", () => this.calls.delete(call));
-    call.on("error", () => this.calls.delete(call));
+    // Evict on close as well as on the data-connection side. A media call and
+    // its data connection share a peer id, but either can close independently:
+    // a viewer whose DataConnection never opens (or whose tab dies abruptly, so
+    // no `close` event fires at all) would otherwise leave a permanent entry.
+    // PeerJS mints a fresh random id per reconnect, so every backoff retry
+    // deposited another key — and `names` is what feeds connectedViewers(),
+    // which would then report viewers who left hours ago.
+    call.on("close", () => {
+      this.calls.delete(call);
+      if (call.peer) this.names.delete(call.peer);
+    });
+    call.on("error", () => {
+      this.calls.delete(call);
+      if (call.peer) this.names.delete(call.peer);
+    });
     if (this.timer == null) this.startSampling();
   }
 
@@ -450,6 +475,7 @@ export class BroadcastHost {
         c.send(JSON.stringify(wireMsg));
       }
     }
+    this.chatHistory = [...this.chatHistory.slice(-199), msgWithPeer];
     this.opts.onChat?.(msgWithPeer);
   }
 
@@ -491,6 +517,16 @@ export class BroadcastHost {
     }
     this.names.delete(peerId);
     this.mutedPeers.delete(peerId);
+  }
+
+  /** Snapshot of retained chat, for rehydrating a remounted host page. */
+  chatLog(): ChatMessage[] {
+    return this.chatHistory;
+  }
+
+  /** Peer IDs currently muted, for rehydrating a remounted host page. */
+  listMuted(): string[] {
+    return [...this.mutedPeers];
   }
 
   /** List all currently connected viewer peer IDs with their display names. */

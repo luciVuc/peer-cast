@@ -7,9 +7,11 @@ import type {
 } from "@peer-cast/shared";
 import { nanoid } from "nanoid";
 import { timingSafeEqual, createHash } from "node:crypto";
+import bcrypt from "bcryptjs";
 import { db } from "../db/index.js";
 import { config } from "../config.js";
 import { usersRepo } from "./users.js";
+import * as recordingsRepo from "./recordings.js";
 
 interface BroadcastRow {
   id: string;
@@ -77,17 +79,46 @@ function withUser(r: BroadcastRow): BroadcastWithUser {
 }
 
 /**
- * Access codes are stored only as a salted-style SHA-256 digest, never in
- * plaintext — the DB may end up in backups, dumps, or the Docker volume.
- * Prefix keeps the format self-describing and lets us soft-migrate any
- * plaintext rows written before this change (only live code broadcasts, and
- * they self-heal on the next re-broadcast).
+ * Access codes are stored as a bcrypt digest, never in plaintext — the DB may
+ * end up in backups, dumps, or the Docker volume.
+ *
+ * bcrypt rather than a bare hash: ACCESS_CODE_MIN is 6 characters chosen by a
+ * human, so the entropy is low and entirely guessable offline. Unsalted
+ * SHA-256 over such an input is a dictionary attack measured in seconds on a
+ * GPU — whoever obtains the DB file recovers every access code, and those
+ * codes are the only thing gating the stream. bcrypt's cost factor makes that
+ * offline attack expensive, exactly as it does for user passwords.
+ *
+ * Cost 10 rather than the 12 used for account passwords: this runs on the
+ * viewer's connect path (every resolve with a code), and code verification is
+ * additionally rate limited per (IP, broadcast), so 10 buys a large offline
+ * work factor without a perceptible viewer delay.
+ *
+ * The `bcrypt$` prefix keeps the format self-describing and lets us
+ * soft-migrate rows written under the old sha256 scheme (and, below, any
+ * legacy plaintext row) — see hashMatches.
  */
+const CODE_BCRYPT_COST = 10;
+
 function hashCode(code: string): string {
-  return `sha256$${createHash("sha256").update(code).digest("hex")}`;
+  return `bcrypt$${bcrypt.hashSync(code, CODE_BCRYPT_COST)}`;
 }
 
+/**
+ * Constant-time-enough code comparison. bcrypt.compare is the timing-safe
+ * primitive; the legacy branches pre-hash both operands so the plaintext-era
+ * rows do not leak length via an early return, and are only reachable for
+ * broadcasts created before this change (self-healing: re-broadcasting the
+ * same code re-hashes it under bcrypt).
+ */
 function hashMatches(stored: string, candidate: string): boolean {
+  if (stored.startsWith("bcrypt$")) {
+    try {
+      return bcrypt.compareSync(candidate, stored.slice("bcrypt$".length));
+    } catch {
+      return false;
+    }
+  }
   if (stored.startsWith("sha256$")) {
     const a = Buffer.from(stored.slice("sha256$".length), "hex");
     const b = createHash("sha256").update(candidate).digest();
@@ -124,6 +155,21 @@ export const broadcastsRepo = {
   getWithUser(id: string): BroadcastWithUser | null {
     const r = this.getRaw(id);
     return r ? withUser(r) : null;
+  },
+
+  /**
+   * Whether `viewerLc` (or an anonymous caller when null) may see this
+   * broadcast's *metadata*. Media access is decided separately at /sessions;
+   * this only governs whether the existence, title, and audience size are
+   * disclosed. Owner and any signed-in viewer always pass for `authenticated`
+   * so a member can see the stream before joining; `code` requires the owner,
+   * since possession of the code is not something the server can infer here.
+   */
+  canViewMetadata(access: string, ownerLc: string, viewerLc: string | null) {
+    if (access === "public") return true;
+    if (viewerLc && viewerLc === ownerLc) return true;
+    if (access === "authenticated") return viewerLc !== null;
+    return false;
   },
 
   /**
@@ -252,12 +298,23 @@ export const broadcastsRepo = {
     return rows.map(withUser);
   },
 
+  /**
+   * Public discovery feed. Only `access = 'public'` rows are listed.
+   *
+   * Restricting by access (not just withholding peerId) is deliberate: a
+   * broadcaster who marks a stream `code` to limit it to a private audience
+   * still expects its *existence* to stay private. Listing title, owner, and
+   * viewer count for a gated stream publishes exactly what the access level
+   * was chosen to conceal, even though the media itself stays protected.
+   * Gated streams are still reachable via /sessions after the access check.
+   */
   listLive(limit = 60): BroadcastWithUser[] {
     const rows = db
       .prepare(
         `SELECT b.* FROM broadcasts b
          JOIN users u ON u.username_lc = b.username_lc
          WHERE b.status = 'live' AND u.discoverable = 1 AND u.banned = 0
+           AND b.access = 'public'
            AND COALESCE(b.stat_at, b.started_at) > ?
          ORDER BY b.started_at DESC LIMIT ?`,
       )
@@ -265,6 +322,7 @@ export const broadcastsRepo = {
     return rows.map(withUser);
   },
 
+  /** See listLive: gated broadcasts are excluded from search too. */
   searchLive(query: string, limit = 20): BroadcastWithUser[] {
     const like = `%${query.replace(/[%_]/g, "")}%`;
     const rows = db
@@ -272,6 +330,7 @@ export const broadcastsRepo = {
         `SELECT b.* FROM broadcasts b
          JOIN users u ON u.username_lc = b.username_lc
          WHERE b.status = 'live' AND u.discoverable = 1 AND u.banned = 0
+           AND b.access = 'public'
            AND COALESCE(b.stat_at, b.started_at) > ?
            AND (b.title LIKE ? OR u.username LIKE ? OR u.display_name LIKE ?)
          ORDER BY b.started_at DESC LIMIT ?`,
@@ -316,6 +375,39 @@ export const broadcastsRepo = {
       )
       .run(Date.now(), Date.now() - olderThanMs);
     return info.changes;
+  },
+
+  /**
+   * Purge ended broadcasts (and their recordings) older than the retention
+   * window. Without this the table grows without bound on a long-lived
+   * instance — nothing else ever deletes an ended row.
+   *
+   * No-op when the window is 0, which is the default: retention is a policy
+   * decision for the operator, so it is opt-in rather than silently deleting
+   * data someone may still want. Returns the number of broadcasts removed.
+   */
+  purgeEndedOlderThan(days: number): number {
+    if (days <= 0) return 0;
+    const cutoff = Date.now() - days * 86_400_000;
+    const ids = db
+      .prepare(
+        `SELECT id FROM broadcasts WHERE status = 'ended'
+           AND COALESCE(ended_at, started_at) < ?`,
+      )
+      .all(cutoff) as { id: string }[];
+    for (const { id } of ids) {
+      // recordings.broadcast_id is ON DELETE SET NULL (they can outlive the
+      // broadcast), so the FK does NOT clean these up — look them up by
+      // broadcast_id and delete each via its own primary key so the on-disk
+      // .webm/.part files go too. A recording kept past its broadcast is still
+      // reachable from the dashboard, so leave those alone.
+      const recs = db
+        .prepare(`SELECT id FROM recordings WHERE broadcast_id = ?`)
+        .all(id) as { id: string }[];
+      for (const r of recs) recordingsRepo.remove(r.id);
+      db.prepare(`DELETE FROM broadcasts WHERE id = ?`).run(id);
+    }
+    return ids.length;
   },
 
   /** Admin force-end a specific broadcast (any owner). */

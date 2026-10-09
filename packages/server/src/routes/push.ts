@@ -4,7 +4,7 @@ import type {
   PushSubscribeRequest,
   PushVapidKeyResponse,
 } from "@peer-cast/shared";
-import { badRequest } from "../lib/errors.js";
+import { badRequest, forbidden } from "../lib/errors.js";
 import {
   getVapidPublicKey,
   isAllowedPushEndpoint,
@@ -13,6 +13,7 @@ import {
 import { asyncHandler } from "../middleware/error.js";
 import { requireAuth } from "../middleware/auth.js";
 import {
+  isEndpointOwnedByOther,
   removeOwnedSubscription,
   saveSubscription,
 } from "../repos/notifications.js";
@@ -53,6 +54,15 @@ pushRouter.post(
     const body = subscribeSchema.parse(req.body) as PushSubscribeRequest;
     if (!isAllowedPushEndpoint(body.subscription.endpoint)) {
       throw badRequest("unsupported push service endpoint", "PUSH_ENDPOINT");
+    }
+    // A push endpoint already bound to a different account must not be
+    // re-pointed at this one — see isEndpointOwnedByOther. This is a 401-class
+    // problem (the caller is authenticated, but not entitled to *this*
+    // endpoint), so refuse rather than silently reassigning.
+    if (
+      isEndpointOwnedByOther(body.subscription.endpoint, req.auth!.usernameLc)
+    ) {
+      throw forbidden("this push endpoint is already in use");
     }
     saveSubscription(req.auth!.usernameLc, {
       endpoint: body.subscription.endpoint,

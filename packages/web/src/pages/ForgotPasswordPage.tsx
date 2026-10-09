@@ -58,8 +58,11 @@ export function ForgotPasswordPage() {
         ) : (
           <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="label">Email address</label>
+              <label className="label" htmlFor="forgot-email">
+                Email address
+              </label>
               <input
+                id="forgot-email"
                 className="input"
                 type="email"
                 autoFocus

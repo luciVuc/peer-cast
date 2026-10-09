@@ -174,6 +174,39 @@ export function remove(id: string): boolean {
   return info.changes > 0;
 }
 
+/**
+ * Reap recordings abandoned mid-upload.
+ *
+ * A host that crashes, closes the tab, or loses the network mid-recording
+ * leaves a row stuck at status='recording' plus its .part file on disk. Nothing
+ * else ever transitions that row, so it holds the owner's per-user byte quota
+ * (RECORDINGS_MAX_PER_USER, 5 GB by default) forever, and the only way to
+ * reclaim it is the user manually deleting the recording.
+ *
+ * Returns the number of rows reaped. Only rows strictly older than the
+ * threshold are touched, so a slow-but-active recording is never collected.
+ */
+export function reapOrphaned(olderThanMs: number): number {
+  const cutoff = Date.now() - olderThanMs;
+  const stale = db
+    .prepare(
+      `SELECT id FROM recordings WHERE status = 'recording' AND created_at < ?`,
+    )
+    .all(cutoff) as { id: string }[];
+  for (const { id } of stale) {
+    remove(id);
+    // The .part is the only artefact for a row that never finalized; a
+    // completed row's replay file is left alone (never finalized here).
+    try {
+      rmSync(partFileOf(id), { force: true });
+      rmSync(replayFileOf(id), { force: true });
+    } catch {
+      /* best-effort file cleanup */
+    }
+  }
+  return stale.length;
+}
+
 /** Hard-delete an owner: removes every recording row + its files. */
 export function deleteAllForUser(usernameLc: string): void {
   for (const r of listForUser(usernameLc)) {
@@ -198,6 +231,7 @@ export default {
   listForUser,
   totalBytesForUser,
   appendBytes,
+  reapOrphaned,
   finalize,
   remove,
   deleteAllForUser,

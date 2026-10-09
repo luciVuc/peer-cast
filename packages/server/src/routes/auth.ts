@@ -4,6 +4,7 @@ import {
   ABOUT_MAX,
   DISPLAY_NAME_MAX,
   EMAIL_RE,
+  PASSWORD_MAX,
   PASSWORD_MIN,
   USERNAME_RE,
 } from "@peer-cast/shared";
@@ -24,6 +25,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { usersRepo } from "../repos/users.js";
 import { invitesRepo } from "../repos/invites.js";
 import { config } from "../config.js";
+import { timingSafeEqual } from "node:crypto";
 
 export const authRouter = Router();
 
@@ -67,7 +69,8 @@ const registerSchema = z.object({
   displayName: z.string().trim().min(1).max(DISPLAY_NAME_MAX),
   password: z
     .string()
-    .min(PASSWORD_MIN, `password must be at least ${PASSWORD_MIN} characters`),
+    .min(PASSWORD_MIN, `password must be at least ${PASSWORD_MIN} characters`)
+    .max(PASSWORD_MAX, `password must be at most ${PASSWORD_MAX} characters`),
   about: z.string().max(ABOUT_MAX).nullish(),
   inviteCode: z.string().trim().min(1).max(64).optional(),
   adminBootstrapSecret: z.string().min(1).max(256).optional(),
@@ -104,10 +107,18 @@ authRouter.post(
     const isDesignatedAdmin = config.adminUsernames.includes(usernameLc);
     const bootstrapSecret =
       body.adminBootstrapSecret ?? req.get("X-Admin-Bootstrap-Secret") ?? "";
-    const isAdminBootstrap =
-      isDesignatedAdmin &&
+    // timingSafeEqual, not ===: this compares a secret, and a short-circuiting
+    // string compare leaks its length and prefix to a prober with enough
+    // resolution. Guard the length first — timingSafeEqual throws on
+    // mismatched buffer sizes.
+    const bootstrapOk =
       !!config.adminBootstrapSecret &&
-      bootstrapSecret === config.adminBootstrapSecret;
+      bootstrapSecret.length === config.adminBootstrapSecret.length &&
+      timingSafeEqual(
+        Buffer.from(bootstrapSecret),
+        Buffer.from(config.adminBootstrapSecret),
+      );
+    const isAdminBootstrap = isDesignatedAdmin && bootstrapOk;
     if (!isAdminBootstrap) {
       if (config.registrationMode === "closed") {
         throw forbidden("registration is closed", "REGISTRATION_CLOSED");

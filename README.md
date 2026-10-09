@@ -617,15 +617,31 @@ a startup warning or break the feature if unset.
 
 ### Server
 
-| Variable        | Default                   | Required  | Description                                                   |
-| --------------- | ------------------------- | --------- | ------------------------------------------------------------- |
-| `PORT`          | `8787`                    | —         | HTTP port                                                     |
-| `HOST`          | `0.0.0.0`                 | —         | Bind address                                                  |
-| `NODE_ENV`      | `development`             | —         | Set to `production` in production                             |
-| `PUBLIC_HOST`   | `localhost`               | **Yes**   | Domain / IP advertised to clients for PeerJS signaling        |
-| `PUBLIC_SECURE` | `false`                   | **Yes**   | `true` when serving over HTTPS/WSS                            |
-| `APP_NAME`      | `PeerCast`                | —         | Displayed in the UI and email subjects                        |
-| `APP_URL`       | `http://localhost:<PORT>` | **Email** | Base URL embedded in email links — must be publicly reachable |
+| Variable           | Default                   | Required     | Description                                                   |
+| ------------------ | ------------------------- | ------------ | ------------------------------------------------------------- |
+| `PORT`             | `8787`                    | —            | HTTP port                                                     |
+| `HOST`             | `0.0.0.0`                 | —            | Bind address                                                  |
+| `NODE_ENV`         | `development`             | —            | Set to `production` in production                             |
+| `PUBLIC_HOST`      | `localhost`               | **Yes**      | Domain / IP advertised to clients for PeerJS signaling        |
+| `PUBLIC_SECURE`    | `false`                   | **Yes**      | `true` when serving over HTTPS/WSS                            |
+| `APP_NAME`         | `PeerCast`                | —            | Displayed in the UI and email subjects                        |
+| `APP_URL`          | `http://localhost:<PORT>` | **Email**    | Base URL embedded in email links — must be publicly reachable |
+| `TRUST_PROXY_HOPS` | `0`                       | **See note** | Reverse-proxy hops trusted for `req.ip` (security-critical)   |
+
+> **`TRUST_PROXY_HOPS` matters more than it looks.** It decides `req.ip`, which
+> is the key for every IP-rate-limited endpoint (login, register, access-code
+> guessing, search, recording create). It is deliberately _not_ inferred from
+> `NODE_ENV`:
+>
+> - **`0` (default)** — clients connect directly to the port. Correct for the
+>   `docker compose` setup, which publishes `8787` with no proxy in front.
+> - **`1`** — you terminate TLS at Caddy/nginx/Cloudflare. **Required** in that
+>   setup; left at `0`, every visitor behind the proxy shares a single
+>   rate-limit bucket and a busy household locks itself out.
+> - **Higher** — that many hops (e.g. a CDN in front of your proxy).
+>
+> Set too high, any client can spoof `X-Forwarded-For` and bypass the limits
+> entirely. The server logs what it resolved at every boot.
 
 ### Auth & sessions
 

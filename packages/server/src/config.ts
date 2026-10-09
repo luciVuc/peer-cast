@@ -234,6 +234,34 @@ export const config = {
     /** Comma-separated allowed origins; "*" allows any (dev default). */
     origins: str("CORS_ORIGINS", "*"),
   },
+
+  /**
+   * Number of trusted reverse-proxy hops in front of this process, used for
+   * `app.set("trust proxy", …)`. This drives rate-limiter keying via
+   * `req.ip`, so it is a security control, not a convenience setting.
+   *
+   * Default 0 = trust nothing. That is the safe choice because every
+   * IP-keyed limiter (login, register, code guessing, recording create) is
+   * derived from `req.ip`: at 0 hops a client sending its own
+   * `X-Forwarded-For` cannot rotate its limiter bucket, whereas at any hop
+   * > 0 with no real proxy in front, every attacker controls their own key and
+   * all of those limits become trivially bypassable.
+   *
+   * Operators terminating TLS at Caddy/nginx/Cloudflare must set this to 1 (or
+   * their actual hop count) or every visitor behind that proxy collapses into a
+   * single shared IP bucket — which is the NAT problem the per-user limiter
+   * keying in app.ts exists to avoid. We cannot guess this correctly, so it is
+   * explicit and validated at boot rather than inferred from NODE_ENV.
+   */
+  trustProxyHops: int("TRUST_PROXY_HOPS", 0),
+
+  /** Retention windows for rows that would otherwise accumulate forever. */
+  retention: {
+    /** Days an ended broadcast stays visible in history. 0 = keep forever. */
+    broadcastDays: int("RETENTION_BROADCAST_DAYS", 0),
+    /** Hours an orphaned in-progress recording (crashed host) is reaped. */
+    orphanRecordingHours: int("RETENTION_ORPHAN_RECORDING_HOURS", 24),
+  },
 } as const;
 
 function parseIceServers() {
