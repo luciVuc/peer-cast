@@ -255,6 +255,13 @@ export const config = {
    */
   trustProxyHops: int("TRUST_PROXY_HOPS", 0),
 
+  /**
+   * Per-viewer bitrate shaping for the P2P mesh. Unset by default: with no
+   * budget configured every sender stays uncapped, which is the behaviour this
+   * project has always had. Operators opt in to the ladder.
+   */
+  bitrate: parseBitrate(),
+
   /** Retention windows for rows that would otherwise accumulate forever. */
   retention: {
     /** Days an ended broadcast stays visible in history. 0 = keep forever. */
@@ -263,6 +270,62 @@ export const config = {
     orphanRecordingHours: int("RETENTION_ORPHAN_RECORDING_HOURS", 24),
   },
 } as const;
+
+/**
+ * Parse BITRATE_TIERS_KBPS into a shaping policy.
+ *
+ * Opt-in: absent or empty means no caps, preserving the pre-existing unshaped
+ * mesh. An operator only pays the complexity once they actually need it.
+ *
+ * Every field is validated rather than trusted, because a malformed value must
+ * never silently produce a policy that caps every viewer to 0 kbps (which would
+ * look like a broken broadcast) or disables shaping when the operator believed
+ * it was on.
+ */
+function parseBitrate() {
+  const rawTiers = process.env.BITRATE_TIERS_KBPS?.trim();
+  if (!rawTiers) return undefined;
+
+  const tiers = rawTiers
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  if (tiers.length === 0) {
+    console.warn(
+      "[config] BITRATE_TIERS_KBPS had no positive numeric entries; " +
+        "bitrate shaping stays disabled.",
+    );
+    return undefined;
+  }
+
+  // The ladder is consumed in order as the audience grows, so it must descend.
+  // Sorting + de-duplicating makes a mistyped order self-correcting rather than
+  // producing an audience curve the operator never asked for.
+  const sorted = [...new Set(tiers)].sort((a, b) => b - a);
+
+  const budgetKbps = int("BITRATE_BUDGET_KBPS", 0);
+  if (budgetKbps <= 0) {
+    console.warn(
+      "[config] BITRATE_TIERS_KBPS is set but BITRATE_BUDGET_KBPS is missing " +
+        "or not positive; bitrate shaping stays disabled.",
+    );
+    return undefined;
+  }
+
+  const rawSafety = Number.parseFloat(process.env.BITRATE_SAFETY_FACTOR ?? "");
+  const safetyFactor =
+    Number.isFinite(rawSafety) && rawSafety > 0 && rawSafety <= 1
+      ? rawSafety
+      : 0.8;
+
+  return {
+    budgetKbps,
+    safetyFactor,
+    tiersKbps: sorted,
+    ratchetSamples: Math.max(1, int("BITRATE_RATCHET_SAMPLES", 3)),
+  };
+}
 
 function parseIceServers() {
   const raw = process.env.ICE_SERVERS;

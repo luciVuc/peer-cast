@@ -1,5 +1,9 @@
 import Peer, { type DataConnection, type MediaConnection } from "peerjs";
-import { CHAT_MAX_LENGTH, type RuntimeConfig } from "@peer-cast/shared";
+import {
+  CHAT_MAX_LENGTH,
+  type RuntimeConfig,
+  type BitrateConfig,
+} from "@peer-cast/shared";
 
 /**
  * Thin wrapper around PeerJS for both roles:
@@ -324,6 +328,165 @@ export function connectAsViewer(options: ConnectAsViewerOptions): ViewerHandle {
   return handle;
 }
 
+// ─── Bitrate shaping (per-viewer maxBitrate) ────────────────────────────
+//
+// PeerCast has no SFU: every viewer gets its own RTCPeerConnection and its own
+// encoder, so host egress is O(viewers). These helpers bound it.
+//
+// Simplicast/SVC is deliberately NOT used here. PeerJS builds its SDP with
+// `addTrack()`, not `addTransceiver({sendEncodings})`, so rids cannot be put in
+// the initial offer, and assigning `rid` via setParameters afterwards is ignored
+// by Chrome. Desktop capture is also a poor simulcast source — the bitrate
+// profile of scrolling text or a video window has nothing in common with a
+// webcam. Resolution adaptation is delegated to the encoder via
+// `degradationPreference` instead, which needs no SDP changes at all.
+
+/** PeerJS exposes the underlying RTCPeerConnection on the connection object;
+ *  this narrows the cast already used by replaceVideoTrack/sample(). */
+type WithPeerConnection = { peerConnection?: RTCPeerConnection };
+
+/**
+ * Tier index for a viewer, given how many are already connected.
+ *
+ * The ladder does not run out: viewers past the last rung stay on the bottom
+ * rung rather than being refused. Admission control and bandwidth shaping are
+ * separate concerns — this one bounds bytes, not headcount — and someone is
+ * perfectly happy watching a low-bitrate screen share. Refusing them to protect
+ * everyone else's resolution would be the wrong trade.
+ *
+ * Exported for unit testing; it is pure and has no WebRTC dependency.
+ */
+export function tierForViewer(
+  connectedCount: number,
+  tiersKbps: number[],
+): number {
+  if (tiersKbps.length === 0) return 0;
+  return Math.min(Math.max(0, connectedCount), tiersKbps.length - 1);
+}
+
+/** kbps cap for a tier index. Index 0 is the top of the ladder and is
+ *  deliberately uncapped — the first viewers get the host's natural quality,
+ *  which is what an operator with budget to spare expects. */
+export function capForTier(tier: number, tiersKbps: number[]): number | null {
+  if (tier <= 0) return null;
+  return tiersKbps[Math.min(tier, tiersKbps.length - 1)] ?? null;
+}
+
+/**
+ * Budget actually in force: the lesser of the operator's configured ceiling and
+ * the browser's own estimate of available outgoing bandwidth.
+ *
+ * `availableOutgoingBitrate` is advisory. Chrome reports it, but it is absent on
+ * browsers that do not compute it and can spike optimistically on a link about
+ * to collapse. So it only ever *tightens* the budget — never widens it past
+ * what the operator configured — and a missing or nonsensical value falls back
+ * to the configured budget. Exported for unit testing.
+ */
+export function effectiveBudgetKbps(
+  configuredKbps: number,
+  measuredKbps: number | null,
+  safetyFactor: number,
+): number {
+  if (
+    measuredKbps == null ||
+    !Number.isFinite(measuredKbps) ||
+    measuredKbps <= 0
+  )
+    return configuredKbps;
+  return Math.min(configuredKbps, Math.round(measuredKbps * safetyFactor));
+}
+
+/** Screen share is legibility-first: when bandwidth is short, drop resolution
+ *  and hold the frame rate. Text stays readable, which is what viewers of a
+ *  screen share actually care about. */
+const DEGRADATION_PREFERENCE = "maintain-framerate" as const;
+
+/** Serialize per-peer. `setParameters` throws if the connection is mid-
+ *  negotiation, and `handleCall` fires for every viewer concurrently — an
+ *  unserialized Promise.all over senders is the most likely source of flaky
+ *  "connection failed" reports, so each peer keeps its own tail chain. */
+const paramQueues = new WeakMap<RTCPeerConnection, Promise<void>>();
+
+function serializeOn<T>(
+  pc: RTCPeerConnection,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prev = paramQueues.get(pc) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  paramQueues.set(
+    pc,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
+/** Apply `degradationPreference` to every sender on a connection.
+ *
+ *  This is a *hint* the encoder consults continuously, so unlike maxBitrate it
+ *  has no single correct moment to be set. Applying it late is still
+ *  beneficial, which is why it runs on the renegotiation re-assert path too. */
+async function applyDegradation(pc: RTCPeerConnection): Promise<void> {
+  await serializeOn(pc, async () => {
+    for (const sender of pc.getSenders()) {
+      if (!sender.track) continue;
+      try {
+        const params = sender.getParameters();
+        if (!params.degradationPreference) {
+          params.degradationPreference = DEGRADATION_PREFERENCE;
+          await sender.setParameters(params);
+        }
+      } catch {
+        /* NotSupportedError / mid-negotiation: the hint is optional and the
+         * maxBitrate cap is the control that actually bounds egress. */
+      }
+    }
+  });
+}
+
+/**
+ * Cap every sender on `pc` at `maxKbps` (video and audio alike).
+ *
+ *  `maxBitrate` is a constraint, not a request: the encoder is free to stay
+ *  below it, and will do so whenever it cannot fill it. That is exactly what we
+ *  want — a static screen costs far less than its cap, and should not be padded
+ *  out to waste a budget slot.
+ */
+async function applyBitrate(
+  pc: RTCPeerConnection,
+  maxKbps: number | null,
+): Promise<void> {
+  await serializeOn(pc, async () => {
+    for (const sender of pc.getSenders()) {
+      if (!sender.track) continue;
+      try {
+        const params = sender.getParameters();
+        // `undefined` must be cleared explicitly — a sender retains its prior
+        // cap for the life of the connection otherwise.
+        if (maxKbps == null) {
+          if (params.encodings?.[0]?.maxBitrate == null) continue;
+          params.encodings = (params.encodings ?? []).map((e) => ({
+            ...e,
+            maxBitrate: undefined,
+          }));
+        } else {
+          params.encodings = (params.encodings ?? [{}]).map((e) => ({
+            ...e,
+            maxBitrate: Math.round(maxKbps * 1000),
+          }));
+        }
+        await sender.setParameters(params);
+      } catch {
+        /* setParameters rejects during negotiation and on senders the browser
+         * will not let us reconfigure (e.g. a closed connection). The next
+         * re-assert retries; failing here must never tear down a viewer. */
+      }
+    }
+  });
+}
+
 // ─── Broadcaster host ────────────────────────────────────────────────────
 
 export interface HostStats {
@@ -334,6 +497,19 @@ export interface HostStats {
   height: number | null;
   /** Cumulative accepted viewer connections since the broadcast started. */
   totalConnections: number;
+  /**
+   * Browser-measured headroom for outgoing traffic, in kbps. This is a live
+   * estimate, not a configured value — it is absent/zero on browsers that do
+   * not report `availableOutgoingBitrate`, which is why the shaping policy
+   * treats it as advisory and never as a replacement for the operator budget.
+   */
+  availableOutgoingKbps: number | null;
+  /** The budget actually in force for this broadcast, in kbps. */
+  budgetKbps: number | null;
+  /** Deepest tier index currently handed out; 0 = best tier. */
+  tierIndex: number | null;
+  /** Consecutive over-budget samples so far, for diagnosing the ratchet. */
+  overBudgetSamples: number;
 }
 
 export interface BroadcastHostOptions {
@@ -373,6 +549,22 @@ export class BroadcastHost {
   private mutedPeers = new Set<string>();
 
   /**
+   * Shaping policy from RuntimeConfig, or null when the operator configured
+   * none — the unshaped mesh, where every sender stays uncapped.
+   */
+  private policy: BitrateConfig | null;
+  /** Current tier index per viewer peer id, assigned at admission time.
+   *  Never re-ranked upward; the ratchet only ever moves viewers deeper. */
+  private tiers = new Map<string, number>();
+  /** Consecutive over-budget samples. Reset the moment we are back inside. */
+  private overBudgetSamples = 0;
+  /** Effective budget for this broadcast, refreshed each sample. */
+  private activeBudgetKbps: number | null = null;
+  /** Guards the ratchet against re-walking the viewer set on every sample
+   *  while over budget. Cleared once the batch settles. */
+  private ratcheting = false;
+
+  /**
    * Bounded chat history retained by the host.
    *
    * The host is the relay and therefore the authority on chat, but BroadcastPage
@@ -386,6 +578,7 @@ export class BroadcastHost {
 
   constructor(opts: BroadcastHostOptions) {
     this.opts = opts;
+    this.policy = opts.cfg.bitrate ?? null;
     this.peer = new Peer(opts.peerId, peerOptions(opts.cfg, opts.token));
     this.peer.on("call", (call) => void this.handleCall(call));
     this.peer.on("connection", (conn) => void this.handleConn(conn));
@@ -413,9 +606,22 @@ export class BroadcastHost {
       return;
     }
     if (call.peer) this.names.set(call.peer, name);
+    // Assign the admission tier BEFORE answering so the very first frames this
+    // viewer receives are already shaped. Assigning after would send a brief
+    // burst of full-bitrate frames to every new viewer — exactly the spike the
+    // policy exists to prevent, and it lands at the worst moment, when the
+    // audience is already growing.
+    const tier = this.admitTier();
+    if (call.peer && tier != null) this.tiers.set(call.peer, tier);
     call.answer(this.opts.stream);
     this.calls.add(call);
     this.totalConnections++;
+    const pc = (call as unknown as WithPeerConnection).peerConnection;
+    if (pc) {
+      void applyDegradation(pc).catch(() => {});
+      const cap = this.capFor(tier);
+      if (cap != null) void applyBitrate(pc, cap).catch(() => {});
+    }
     // Evict on close as well as on the data-connection side. A media call and
     // its data connection share a peer id, but either can close independently:
     // a viewer whose DataConnection never opens (or whose tab dies abruptly, so
@@ -425,13 +631,80 @@ export class BroadcastHost {
     // which would then report viewers who left hours ago.
     call.on("close", () => {
       this.calls.delete(call);
-      if (call.peer) this.names.delete(call.peer);
+      if (call.peer) {
+        this.names.delete(call.peer);
+        this.tiers.delete(call.peer);
+      }
     });
     call.on("error", () => {
       this.calls.delete(call);
-      if (call.peer) this.names.delete(call.peer);
+      if (call.peer) {
+        this.names.delete(call.peer);
+        this.tiers.delete(call.peer);
+      }
     });
     if (this.timer == null) this.startSampling();
+  }
+
+  /**
+   * Pick a tier for a newly admitted viewer.
+   *
+   *  Tier is a function of how many viewers are already connected, capped at
+   *  the bottom of the ladder. The ladder deliberately does not run out: a
+   *  hundredth viewer gets the last rung's cap rather than being refused.
+   *  Refusing is NOT an option here — admission control and bandwidth shaping
+   *  are separate levers, and this one is bandwidth only. Rejecting viewers to
+   *  protect per-viewer quality would mean dropping people who are perfectly
+   *  happy watching a 300 kbps screen share.
+   *
+   *  Returns null when no policy is configured.
+   */
+  private admitTier(): number | null {
+    if (!this.policy) return null;
+    return tierForViewer(this.calls.size, this.policy.tiersKbps);
+  }
+
+  /** kbps cap for a tier index, or null for "uncapped" (tier 0 / no policy). */
+  private capFor(tier: number | null): number | null {
+    if (!this.policy || tier == null) return null;
+    return capForTier(tier, this.policy.tiersKbps);
+  }
+
+  private effectiveBudget(measuredKbps: number | null): number | null {
+    if (!this.policy) return null;
+    return effectiveBudgetKbps(
+      this.policy.budgetKbps,
+      measuredKbps,
+      this.policy.safetyFactor,
+    );
+  }
+
+  /**
+   * Move every connected viewer one rung deeper. Sustained overload only —
+   * see the over-budget counter in sample(). One-way: a viewer that has been
+   * demoted is never promoted back, so quality decays monotonically under load
+   * instead of oscillating.
+   */
+  private ratchetDown(): void {
+    if (!this.policy || this.ratcheting) return;
+    const last = this.policy.tiersKbps.length - 1;
+    const work: Array<Promise<void>> = [];
+    for (const call of this.calls) {
+      const id = call.peer;
+      if (!id) continue;
+      const current = this.tiers.get(id) ?? 0;
+      if (current >= last) continue; // already at the bottom rung
+      const next = current + 1;
+      this.tiers.set(id, next);
+      const pc = (call as unknown as WithPeerConnection).peerConnection;
+      const cap = this.capFor(next);
+      if (pc && cap != null) work.push(applyBitrate(pc, cap).catch(() => {}));
+    }
+    if (work.length === 0) return;
+    this.ratcheting = true;
+    void Promise.all(work).finally(() => {
+      this.ratcheting = false;
+    });
   }
 
   /** Accept the viewer's chat DataConnection (same ticket gate as media). */
@@ -517,6 +790,7 @@ export class BroadcastHost {
     }
     this.names.delete(peerId);
     this.mutedPeers.delete(peerId);
+    this.tiers.delete(peerId);
   }
 
   /** Snapshot of retained chat, for rehydrating a remounted host page. */
@@ -575,6 +849,20 @@ export class BroadcastHost {
       throw err;
     }
 
+    // replaceTrack preserves encodings, but the cap is not guaranteed to have
+    // survived — a sender created fresh by a renegotiation starts uncapped.
+    // Re-assert every viewer's own tier rather than assuming, so swapping the
+    // captured surface can never quietly remove the shaping policy.
+    if (this.policy) {
+      const perPeer = [...this.calls].flatMap((call) => {
+        const pc = (call as unknown as WithPeerConnection).peerConnection;
+        if (!pc || !call.peer) return [];
+        const cap = this.capFor(this.tiers.get(call.peer) ?? 0);
+        return [applyBitrate(pc, cap).catch(() => {})];
+      });
+      await Promise.all(perPeer);
+    }
+
     const oldTracks = this.opts.stream.getVideoTracks();
     oldTracks.forEach((oldTrack) => this.opts.stream.removeTrack(oldTrack));
     this.opts.stream.addTrack(track);
@@ -586,9 +874,9 @@ export class BroadcastHost {
     const settings = track?.getSettings();
     let totalBytes = 0;
     let ts = Date.now();
+    let availableOutgoing = 0;
     for (const call of this.calls) {
-      const pc = (call as unknown as { peerConnection?: RTCPeerConnection })
-        .peerConnection;
+      const pc = (call as unknown as WithPeerConnection).peerConnection;
       if (!pc) continue;
       try {
         const stats = await pc.getStats();
@@ -596,6 +884,19 @@ export class BroadcastHost {
           if (r.type === "outbound-rtp" && !r.isRemote) {
             totalBytes += r.bytesSent ?? 0;
             ts = r.timestamp ?? ts;
+          }
+          // `availableOutgoingBitrate` is the browser's own headroom estimate
+          // for this pair. It is absent on browsers that do not compute it, so
+          // it is summed defensively and treated as advisory — never required.
+          if (
+            r.type === "candidate-pair" &&
+            typeof r.availableOutgoingBitrate === "number" &&
+            r.availableOutgoingBitrate > 0
+          ) {
+            availableOutgoing = Math.max(
+              availableOutgoing,
+              r.availableOutgoingBitrate,
+            );
           }
         });
       } catch {
@@ -610,6 +911,32 @@ export class BroadcastHost {
         kbps = Math.round(((totalBytes - prev.bytes) * 8) / dt / 1000);
     }
     this.baselines.set("agg", { bytes: totalBytes, ts });
+
+    const measuredKbps =
+      availableOutgoing > 0 ? availableOutgoing / 1000 : null;
+    this.activeBudgetKbps = this.effectiveBudget(measuredKbps);
+
+    // Sustained-overload ratchet. `kbps` is null on the first sample (no
+    // baseline yet) and while nobody is connected; neither is over budget, so
+    // the counter resets rather than accumulating toward a spurious demotion.
+    const overBudget =
+      this.policy != null &&
+      kbps != null &&
+      this.activeBudgetKbps != null &&
+      kbps > this.activeBudgetKbps;
+    this.overBudgetSamples = overBudget ? this.overBudgetSamples + 1 : 0;
+    if (
+      overBudget &&
+      this.overBudgetSamples >= (this.policy?.ratchetSamples ?? 3) &&
+      !this.ratcheting
+    ) {
+      this.ratchetDown();
+      // Reset so the next demotion needs a fresh run of sustained overload,
+      // rather than cascading one tier per sample while still over budget.
+      this.overBudgetSamples = 0;
+    }
+
+    const tierValues = [...this.tiers.values()];
     this.opts.onStats({
       viewers: this.calls.size,
       bitrateKbps: this.calls.size ? (kbps ?? 0) : null,
@@ -617,6 +944,14 @@ export class BroadcastHost {
       width: settings?.width ?? null,
       height: settings?.height ?? null,
       totalConnections: this.totalConnections,
+      availableOutgoingKbps: measuredKbps ? Math.round(measuredKbps) : null,
+      budgetKbps: this.activeBudgetKbps,
+      tierIndex: this.policy
+        ? tierValues.length
+          ? Math.max(...tierValues)
+          : 0
+        : null,
+      overBudgetSamples: this.overBudgetSamples,
     });
   }
 
@@ -627,6 +962,10 @@ export class BroadcastHost {
     this.calls.clear();
     for (const conn of this.dataConns) conn.close();
     this.dataConns.clear();
+    this.tiers.clear();
+    this.names.clear();
+    this.overBudgetSamples = 0;
+    this.activeBudgetKbps = null;
     this.peer.destroy();
   }
 }

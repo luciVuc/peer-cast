@@ -211,6 +211,10 @@ export function BroadcastPage() {
               video: { frameRate: 30 },
               audio: true,
             });
+      // Screen content is legibility-first: tell the encoder to favour
+      // sharpness over frame rate so small text stays readable, and to
+      // downscale resolution (not frame rate) when bandwidth runs short.
+      stream.getVideoTracks().forEach((t) => (t.contentHint = "text"));
       setPreviewStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -282,6 +286,10 @@ export function BroadcastPage() {
               video: { frameRate: 30 },
               audio: true,
             });
+      // Screen content is legibility-first: tell the encoder to favour
+      // sharpness over frame rate so small text stays readable, and to
+      // downscale resolution (not frame rate) when bandwidth runs short.
+      stream.getVideoTracks().forEach((t) => (t.contentHint = "text"));
       // If we just captured a fresh stream, clear the preview state.
       if (stream !== previewStream) {
         setPreviewStream(null);
@@ -604,7 +612,7 @@ export function BroadcastPage() {
         </div>
 
         {isLive && stats && (
-          <div className="card grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
+          <div className="card grid grid-cols-2 gap-4 p-4 sm:grid-cols-5">
             <Stat label="Viewers" value={String(stats.viewers ?? 0)} />
             <Stat
               label="Bitrate"
@@ -624,6 +632,17 @@ export function BroadcastPage() {
                   : "—"
               }
             />
+            {stats.budgetKbps != null && (
+              <Stat
+                label={`Outbound budget (tier ${stats.tierIndex ?? 0})`}
+                value={`${stats.bitrateKbps ?? 0} / ${stats.budgetKbps} kbps`}
+                title={
+                  stats.availableOutgoingKbps != null
+                    ? `Browser-estimated available outgoing: ${stats.availableOutgoingKbps} kbps`
+                    : "Browser did not report available outgoing bandwidth"
+                }
+              />
+            )}
           </div>
         )}
       </div>
@@ -948,9 +967,17 @@ export function BroadcastPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
   return (
-    <div>
+    <div title={title}>
       <div className="text-xs uppercase tracking-wide text-slate-500">
         {label}
       </div>

@@ -343,6 +343,50 @@ export interface RTCIceServerConfig {
   credential?: string;
 }
 
+/**
+ * Per-viewer bitrate shaping for the P2P mesh.
+ *
+ * PeerCast has no SFU: every viewer opens its own RTCPeerConnection against the
+ * broadcaster, and WebRTC does not share one encoder across connections. Host
+ * egress is therefore O(viewers). Shaping each viewer's `maxBitrate` is what
+ * keeps a modest uplink from saturating as the audience grows.
+ *
+ * Omitted entirely when the operator configures no budget — the client then
+ * leaves every sender uncapped, which is the pre-existing behaviour.
+ */
+export interface BitrateConfig {
+  /**
+   * Total host egress budget in kbps. The host's actual budget is the lesser of
+   * this and the browser-measured `availableOutgoingBitrate` × safetyFactor, so
+   * a conservative operator setting is not defeated by an optimistic estimate.
+   */
+  budgetKbps: number;
+  /**
+   * Fraction of measured available outgoing bitrate we are willing to commit
+   * to, in (0, 1]. Guards against acting on a bandwidth estimate that is
+   * momentarily over-optimistic and then collapses the whole connection.
+   */
+  safetyFactor: number;
+  /**
+   * Descending per-viewer bitrate caps as kbps, in the order they are consumed.
+   * Index 0 is the cap given to the first viewers while the budget is ample;
+   * each further viewer is admitted one rung lower. The final entry applies to
+   * every viewer beyond the last index — the ladder does not run out.
+   *
+   * Resolution is deliberately NOT encoded here. `degradationPreference:
+   * "maintain-framerate"` handles the sharpness/frame-rate tradeoff inside each
+   * cap, which keeps this a one-dimensional policy.
+   */
+  tiersKbps: number[];
+  /**
+   * Consecutive over-budget samples required before already-connected viewers
+   * are moved DOWN a tier. Prevents flapping on a momentary spike — the sample
+   * interval is 2s, so the default of 3 tolerates ~6s of sustained overload.
+   * Viewers are never moved UP outside of their original admission tier.
+   */
+  ratchetSamples?: number;
+}
+
 /** Public runtime config the web app fetches on boot (`GET /api/config`). */
 export interface RuntimeConfig {
   signal: SignalConfig;
@@ -352,4 +396,6 @@ export interface RuntimeConfig {
   registration: RegistrationMode;
   /** Whether the operator configured a secret-backed admin bootstrap path. */
   adminBootstrap: boolean;
+  /** Bitrate shaping policy; absent = no caps (unshaped mesh). */
+  bitrate?: BitrateConfig;
 }

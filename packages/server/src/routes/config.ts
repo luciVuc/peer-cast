@@ -33,6 +33,16 @@ configRouter.get("/", (_req, res) => {
           )
         : config.signal.iceServers,
     },
+    // Absent unless the operator configured a usable budget — an unshaped mesh
+    // is the default and the client treats a missing policy as "apply no caps".
+    // Re-validated here, not just in parseBitrate(): a non-positive budget or an
+    // empty ladder would reach the client as a policy that caps every viewer at
+    // 0 kbps, which presents as a broken broadcast rather than a misconfig.
+    ...(config.bitrate &&
+    config.bitrate.budgetKbps > 0 &&
+    config.bitrate.tiersKbps.length > 0
+      ? { bitrate: config.bitrate }
+      : {}),
   };
   res.json(out);
 });
