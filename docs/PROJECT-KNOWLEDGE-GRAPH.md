@@ -79,7 +79,7 @@ Important runtime defaults:
 | `SIGNAL_KEY`        | `peercast`         | PeerJS broker key                       |
 | `ICE_SERVERS`       | Google STUN        | Add TURN for restrictive NATs           |
 | `REGISTRATION_MODE` | `open`             | `invite`/`closed` restrict new accounts |
-| `STALE_LIVE_MS`     | 90 seconds         | Removes stale discovery sessions        |
+| `STALE_LIVE_MS`     | 5 minutes          | Removes stale discovery sessions        |
 | `CORS_ORIGINS`      | `*`                | Narrow in cross-origin deployments      |
 
 ## 4. Domain and persistence graph

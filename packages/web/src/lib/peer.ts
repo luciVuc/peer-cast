@@ -583,6 +583,16 @@ export class BroadcastHost {
     this.peer.on("call", (call) => void this.handleCall(call));
     this.peer.on("connection", (conn) => void this.handleConn(conn));
     this.peer.on("error", (e) => opts.onError?.(e as Error));
+    // Sample + heartbeat from the moment the signaling socket is open —
+    // NOT on the first viewer. The server reaper force-ends a live broadcast
+    // whose stats heartbeat (STALE_LIVE_MS) goes quiet, so a streaming host
+    // with zero viewers must keep heartbeating or its row is reaped and its
+    // peerId nulled: exactly the "host still streaming, nobody can connect"
+    // symptom. sample() is already viewer-agnostic (it treats 0 viewers as
+    // "null bitrate", never as over budget), so starting it here is safe.
+    this.peer.on("open", () => {
+      if (this.timer == null) this.startSampling();
+    });
   }
 
   ready(): Promise<void> {
@@ -643,7 +653,6 @@ export class BroadcastHost {
         this.tiers.delete(call.peer);
       }
     });
-    if (this.timer == null) this.startSampling();
   }
 
   /**

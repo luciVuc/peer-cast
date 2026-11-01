@@ -6,6 +6,7 @@ import { makeApp, resetDb, validUser } from "./helpers.js";
 import { configureApp } from "../src/app.js";
 import { db } from "../src/db/index.js";
 import { broadcastsRepo } from "../src/repos/broadcasts.js";
+import { config } from "../src/config.js";
 
 const app = makeApp();
 
@@ -165,6 +166,17 @@ describe("broadcasts", () => {
     expect(broadcastsRepo.endStale(90_000)).toBe(0);
     const live = await request(app).get("/api/broadcasts/live");
     expect(live.body.broadcasts).toHaveLength(1);
+  });
+
+  it("STALE_LIVE_MS default stays forgiving (≥5 min)", () => {
+    // Regression guard: the web host used to start its stats heartbeat only
+    // on the first viewer connection, so a live broadcast with zero viewers
+    // went silent and was force-ended after 90 s — while the host still saw
+    // "live" and viewers could never resolve a peerId. Layer 1 (the host now
+    // heartbeats from signaling-open) fixes the trigger; layer 2 pins the
+    // threshold high enough that a single dropped heartbeat on a throttled
+    // background tab can never kill a running broadcast on its own.
+    expect(config.staleLiveMs).toBeGreaterThanOrEqual(300_000);
   });
   it("the stats heartbeat does not consume the broadcast-start rate budget", async () => {
     // Regression guard: the start limiter is mounted on the "/api/broadcasts"

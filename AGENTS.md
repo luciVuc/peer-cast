@@ -99,8 +99,8 @@ npm run dev:web          # Vite dev server, :5173 (proxies /api + /peerjs)
 
 npm -w @peer-cast/extension run check   # node --check all extension JS
 
-npm test                 # server + web unit tests (Vitest, 129 tests)
-npm run test:e2e         # full build + Playwright E2E (5 tests)
+npm test                 # server + web unit tests (Vitest, 190 tests)
+npm run test:e2e         # full build + Playwright E2E (6 tests)
 npm -w @peer-cast/e2e run install-browser   # one-time: download Playwright browser
 
 docker compose up -d --build                   # single-container production
@@ -323,6 +323,21 @@ docker compose --profile turn up -d --build    # + bundled coturn TURN relay
     - `skip` runs BEFORE the handler, so it cannot read `res.statusCode` — use
       `skipSuccessfulRequests` for the status half.
 
+27. **The host stats heartbeat must flow with zero viewers.** The server reaper
+    (`endStale` + `STALE_LIVE_MS`, default 5 min) force-ends any live broadcast
+    whose stats heartbeat goes quiet — a crashed host's row must not stay live
+    forever. The browser host (`BroadcastHost` in `web/src/lib/peer.ts`)
+    therefore arms its 2 s sampler on the PeerJS `open` event, NOT on the
+    first viewer connection. Arming on first viewer made a broadcast go
+    silent while nobody watched: the reaper nulled the `peerId` and the host
+    kept streaming to an audience it could never gain (the "host is live but
+    nobody can connect" bug). `sample()` is viewer-agnostic by design —
+    0 viewers means `bitrateKbps: null`, never "over budget". Keep the
+    ratchet logic out of the no-viewer path, keep the default threshold
+    forgiving (pinned ≥5 min in `test/broadcasts.test.ts`), and remember the
+    extension host runs its own sampler (offscreen.js `startBitrateMonitor`
+    at go-live; its 4 s `forwardStats` throttle is under the threshold).
+
 ## Data model (SQLite — `packages/server/src/db/index.ts`)
 
 Tables are created with `CREATE TABLE IF NOT EXISTS`. Missing columns on
@@ -362,9 +377,10 @@ types together.
 
 - [ ] `npm run build` succeeds (shared → web → server).
 - [ ] `npm run typecheck` clean for all three TS packages.
-- [ ] `npm test` green — 100 server tests + 29 web tests.
+- [ ] `npm test` green — 132 server tests + 58 web tests.
 - [ ] `npm run check:versions` green (version SSOT).
-- [ ] `npm run test:e2e` green — 5 Playwright tests (UI, WebRTC, moderation).
+- [ ] `npm run test:e2e` green — 6 Playwright tests (UI, WebRTC, moderation,
+      peer-id shadow).
 - [ ] `npm -w @peer-cast/extension run check` passes.
 - [ ] `npx prettier --check .` clean.
 - [ ] Server boots, `GET /api/health` → `{ok:true}`, `GET /peerjs` serves the

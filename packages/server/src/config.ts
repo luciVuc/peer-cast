@@ -169,8 +169,12 @@ export const config = {
   })(),
 
   /** A "live" broadcast whose last stats heartbeat is older than this is dead.
-   * Web + extension hosts report stats every ~2 s; 90 s tolerates drops. */
-  staleLiveMs: int("STALE_LIVE_MS", 90_000),
+   *  Web + extension hosts report stats every ~2-4 s. The threshold must stay
+   *  forgiving (≥5 min): host browsers regularly throttle background-tab
+   *  timers, and a short force-end window converts any transient heartbeat
+   *  gap — a throttled tab, a GC pause, one dropped connection — into a
+   *  killed broadcast, while the host still sees "live" on screen. */
+  staleLiveMs: int("STALE_LIVE_MS", 300_000),
 
   /** Usernames allowed to use the operator-controlled bootstrap secret. */
   adminUsernames: str("ADMIN_USERNAMES", "")

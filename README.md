@@ -804,8 +804,8 @@ grabbed by the layout switcher — remap if needed.
 ## Testing
 
 ```bash
-npm test                 # Vitest: server (100 tests) + web (29 tests) unit tests
-npm run test:e2e         # build → Playwright E2E (5 tests: UI flows + real WebRTC)
+npm test                 # Vitest: server (132 tests) + web (58 tests) unit tests
+npm run test:e2e         # build → Playwright E2E (6 tests: UI flows + real WebRTC)
 npm run check:versions   # every version-carrying file matches root package.json
 
 # First time only — downloads the Playwright browser
